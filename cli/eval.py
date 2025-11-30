@@ -35,7 +35,9 @@ def find_best_model():
     for model_dir in models_dir.iterdir():
         if model_dir.is_dir():
             best_path = model_dir / "best"
-            if best_path.exists() and (best_path / "model.safetensors").exists():
+            # Check for both regular models and LoRA models
+            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
+            if best_path.exists() and has_model:
                 # Get modification time to find the most recent
                 mtime = best_path.stat().st_mtime
                 best_models.append((str(best_path), mtime, model_dir.name))
@@ -101,7 +103,8 @@ def prepare_eval_data(dataset_name, num_samples=100):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate the best trained model')
+    parser = argparse.ArgumentParser(description='Evaluate a trained model')
+    parser.add_argument('--model-path', help='Path to specific model directory (if not provided, uses best model)')
     parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
                        default='msmarco', help='Dataset to use for evaluation')
     parser.add_argument('--samples', type=int, default=100,
@@ -115,10 +118,17 @@ def main():
     logger.info("=== Model Evaluation ===")
     print()
 
-    # 1. Find best model
-    model_path = find_best_model()
-    if not model_path:
-        return
+    # 1. Get model path
+    if args.model_path:
+        model_path = args.model_path
+        if not Path(model_path).exists():
+            logger.error(f"❌ Model path does not exist: {model_path}")
+            return
+        logger.info(f"📍 Using specified model: {model_path}")
+    else:
+        model_path = find_best_model()
+        if not model_path:
+            return
 
     # 2. Load model
     logger.info("Loading model...")

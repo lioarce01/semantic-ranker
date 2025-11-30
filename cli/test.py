@@ -33,7 +33,9 @@ def find_best_model():
     for model_dir in models_dir.iterdir():
         if model_dir.is_dir():
             best_path = model_dir / "best"
-            if best_path.exists() and (best_path / "model.safetensors").exists():
+            # Check for both regular models and LoRA models
+            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
+            if best_path.exists() and has_model:
                 mtime = best_path.stat().st_mtime
                 best_models.append((str(best_path), mtime, model_dir.name))
 
@@ -108,7 +110,8 @@ def get_sample_queries(domain="general"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test the best trained model')
+    parser = argparse.ArgumentParser(description='Test a trained model')
+    parser.add_argument('--model-path', help='Path to specific model directory (if not provided, uses best model)')
     parser.add_argument('--queries', nargs='+',
                        help='Custom queries to test (optional)')
     parser.add_argument('--domain', choices=['general', 'medical', 'legal', 'technical', 'msmarco', 'msmarco_fresh'],
@@ -121,10 +124,17 @@ def main():
     logger.info("=== Model Testing ===")
     print()
 
-    # 1. Find and load best model
-    model_path = find_best_model()
-    if not model_path:
-        return
+    # 1. Get model path
+    if args.model_path:
+        model_path = args.model_path
+        if not Path(model_path).exists():
+            logger.error(f"❌ Model path does not exist: {model_path}")
+            return
+        logger.info(f"📍 Using specified model: {model_path}")
+    else:
+        model_path = find_best_model()
+        if not model_path:
+            return
 
     logger.info("Loading model...")
     model = CrossEncoderModel.load(model_path)

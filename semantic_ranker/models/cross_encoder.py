@@ -346,6 +346,9 @@ class CrossEncoderModel:
         instance.model = model
         instance.lora_config = config.get('lora_config', {})
 
+        # Initialize cached model capabilities (normally done in __init__)
+        instance._model_supports_token_type_ids = instance._check_token_type_ids_support()
+
         logger.info(f"Model loaded from {load_path}")
         return instance
 

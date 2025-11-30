@@ -10,6 +10,7 @@ import sys
 import os
 import json
 from pathlib import Path
+import argparse
 
 # Add project root to path
 current_dir = Path(__file__).parent
@@ -77,15 +78,20 @@ def convert_data_format(data):
 
     return converted
 
-def evaluate_model():
-    """Evalúa el mejor modelo disponible en el test set"""
-    print("🔍 Evaluando el mejor modelo disponible...")
-
-    # Encontrar el mejor modelo automáticamente
-    model_path = find_best_model()
-    if not model_path:
-        print("❌ No se encontró ningún modelo entrenado")
-        return None
+def evaluate_model(model_path=None):
+    """Evalúa un modelo específico o el mejor disponible en el test set"""
+    if model_path:
+        print(f"🔍 Evaluando modelo específico: {model_path}")
+        if not Path(model_path).exists():
+            print(f"❌ Model path does not exist: {model_path}")
+            return None
+    else:
+        print("🔍 Evaluando el mejor modelo disponible...")
+        # Encontrar el mejor modelo automáticamente
+        model_path = find_best_model()
+        if not model_path:
+            print("❌ No se encontró ningún modelo entrenado")
+            return None
 
     print(f"📍 Usando modelo: {model_path}")
 
@@ -216,6 +222,11 @@ def print_interpretation(your_results):
         print("• Evaluar en más benchmarks")
 
 def main():
+    parser = argparse.ArgumentParser(description='Compare your model with state-of-the-art benchmarks')
+    parser.add_argument('--model-path', help='Path to specific model directory (if not provided, uses best model)')
+
+    args = parser.parse_args()
+
     print("🚀 Benchmark Comparison Tool")
     print("Compara tu modelo con state-of-the-art")
     print()
@@ -225,7 +236,9 @@ def main():
 
     try:
         # Evaluar modelo actual
-        your_results = evaluate_model()
+        your_results = evaluate_model(args.model_path)
+        if your_results is None:
+            return
         print("✅ Evaluación completada")
 
         # Mostrar comparación
