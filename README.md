@@ -111,17 +111,27 @@ optimizer.export_to_onnx(
 
 ```
 semantic-ranker/
-├── semantic_ranker/
+├── semantic_ranker/       # Core package
 │   ├── data/              # Data collection and preprocessing
 │   ├── models/            # Model architectures
 │   ├── training/          # Training scripts and utilities
 │   ├── evaluation/        # Evaluation metrics
 │   ├── rag/              # RAG pipeline integration
 │   └── optimization/      # ONNX, quantization, LoRA
-├── examples/              # Example scripts
+├── scripts/              # Utility scripts
+│   ├── check_dependencies.py    # Check required packages
+│   ├── list_available_models.py # List trained models
+│   ├── retrain_best_model.py    # Retrain best model
+│   └── train_any_domain.py      # Train any domain
+├── examples/              # Example scripts (01-09)
+├── datasets/              # Training datasets by domain
+├── models/                # Trained model checkpoints
+├── docs/                  # Documentation
 ├── tests/                # Unit tests
 ├── requirements.txt      # Dependencies
-└── README.md            # This file
+├── setup.py             # Package setup
+├── README.md            # This file
+└── LICENSE              # License
 ```
 
 ## Advanced Features
@@ -162,6 +172,21 @@ trainer.train(
 - **MRR@k**: Mean Reciprocal Rank
 - **MAP**: Mean Average Precision
 - **Hit Rate@k**: Percentage of queries with relevant docs in top-k
+
+## 📚 Documentation
+
+- **[📖 Glosario ML](docs/GLOSARIO_ML.md)**: Guía completa para entender métricas de entrenamiento y evaluar modelos
+- **[🚀 Guía Paso a Paso](docs/GUIA_PASO_A_PASO.md)**: Tutorial detallado en español
+- **[⚡ Quick Start](docs/QUICKSTART.md)**: Inicio rápido para usuarios avanzados
+- **[📂 Estructura del Proyecto](.project_structure.md)**: Documentación completa de la organización del código
+
+## 🔬 Research Implementation
+
+Based on cutting-edge research:
+- "Passage Re-ranking with BERT" (Nogueira et al., 2019)
+- "ColBERT: Efficient and Effective Passage Search" (Khattab & Zaharia, 2020)
+- "LoRA: Low-Rank Adaptation" (Hu et al., 2021)
+- Sentence Transformers documentation and best practices
 
 ## References
 

@@ -42,13 +42,17 @@ venv.bak/
 *.ipynb
 
 # Models and data
-models/
+# Keep small example models, ignore large trained models
+models/*/
+!models/README.md
 *.pt
 *.pth
 *.onnx
 *.bin
+# Keep organized datasets, ignore large data files
 data/
-datasets/
+datasets/*.hdf5
+datasets/*.h5
 *.hdf5
 *.h5
 
@@ -83,9 +87,24 @@ temp/
 # OS
 Thumbs.db
 .DS_Store
+*.tmp
+*.temp
 
 # Project specific
 evaluation_results.json
 training_history.json
 *.pkl
 *.pickle
+
+# Cursor IDE
+.cursor/
+terminals/
+
+# ML experiment tracking
+tensorboard/
+runs/
+lightning_logs/
+
+# Large model files
+*.safetensors
+!models/README.md

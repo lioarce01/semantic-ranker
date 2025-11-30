@@ -1,0 +1,74 @@
+[
+  {
+    "query": "¿Cómo estudiar efectivamente para exámenes universitarios?",
+    "positive": "Estudio efectivo universitarios: 1. Planificación: calendario semanal, dividir syllabus en chunks manejables, técnica Pomodoro (25min estudio + 5min descanso). 2. Técnicas activas: Feynman (explicar conceptos simple), flashcards Anki para repaso espaciado, mapas mentales. 3. Ambiente: lugar dedicado, silencio, buena iluminación, eliminar distracciones. 4. Materiales: apuntes propios + lecturas complementarias, resúmenes ejecutivos. 5. Práctica: problemas/ejercicios similares exámenes previos, autoevaluación semanal. 6. Salud: 7-8 horas sueño, ejercicio regular, alimentación balanceada, mindfulness para reducir ansiedad. 7. Grupos estudio: peer teaching, discutir conceptos difíciles. 8. Descansos: técnica 52/17 (52min concentración máxima, 17min descanso). 9. Revisión: repaso semanal temas previos, identificación puntos débiles. 10. Simulacros: exámenes prueba con tiempo limitado.",
+    "negatives": [
+      "Estudiar toda la noche antes del examen es la mejor estrategia.",
+      "Solo es necesario leer los apuntes una vez para memorizar todo.",
+      "Los grupos de estudio solo sirven para copiar y no para aprender realmente."
+    ]
+  },
+  {
+    "query": "¿Cuáles son los fundamentos de la teoría de la relatividad especial de Einstein?",
+    "positive": "Relatividad especial Einstein: 1. Postulados: (a) leyes físicas iguales en marcos inerciales, (b) velocidad luz c constante en todos marcos. 2. Consecuencias: dilatación tiempo (t' = γ(t - vx/c²)), contracción longitud (l' = l/γ), equivalencia masa-energía (E = mc²). 3. Transformaciones Lorentz: coordenadas espacio-tiempo entre marcos. 4. Efectos relativistas: paradoja gemelos, muon cósmico decay. 5. Espacio-tiempo Minkowski: geometría no-euclidiana, intervalo espacio-temporal invariante. 6. Simetría Lorentz: grupo Poincaré, conservación momentum-energía. 7. Experimentos confirmatorios: Michelson-Morley (isotropía luz), Ives-Stilwell (dilatación tiempo), Kennedy-Thorndike. 8. Aplicaciones: GPS (corrección relativista), aceleradores partículas, cosmología.",
+    "negatives": [
+      "La relatividad especial significa que todo es relativo y no hay verdades absolutas.",
+      "La velocidad de la luz solo es constante en el vacío absoluto.",
+      "La relatividad especial invalida completamente la física newtoniana."
+    ]
+  },
+  {
+    "query": "¿Cómo escribir un artículo científico de calidad?",
+    "positive": "Artículo científico: 1. Estructura IMRAD: Introduction (hipótesis, revisión literatura), Methods (detallados para reproducibilidad), Results (datos, estadística), Discussion (interpretación, implicaciones). 2. Abstract: 150-250 palabras, propósito, métodos, resultados principales, conclusiones. 3. Introducción: contexto, gap conocimiento, objetivos específicos. 4. Métodos: diseño experimental, participantes/materiales, procedimientos estadísticos. 5. Resultados: tablas/figuras primero, luego texto explicativo, estadística descriptiva/inferencial. 6. Discusión: interpretar resultados, comparar literatura, limitaciones, implicaciones futuras. 7. Referencias: estilo Vancouver/APA consistente, fuentes peer-reviewed recientes. 8. Título: conciso, informativo, palabras clave. 9. Keywords: 5-8 términos para indexación. 10. Revisión: claridad, concisión, objetividad, evidencia. 11. Journal selection: factor impacto, alcance, tiempo revisión.",
+    "negatives": [
+      "Los artículos científicos deben escribirse en lenguaje complejo para sonar más académicos.",
+      "La introducción debe contener todos los resultados del estudio.",
+      "Las referencias bibliográficas son opcionales en artículos científicos."
+    ]
+  },
+  {
+    "query": "¿Qué es el aprendizaje automático y cuáles son sus tipos principales?",
+    "positive": "Aprendizaje automático: subcampo IA donde sistemas aprenden patrones datos sin programación explícita. Tipos: 1. Supervisado: etiquetas conocidas - clasificación (regresión logística, SVM, random forest, redes neuronales) y regresión (lineal, polinomial, ridge/lasso). 2. No supervisado: sin etiquetas - clustering (k-means, DBSCAN, hierarchical), reducción dimensionalidad (PCA, t-SNE, autoencoders), asociación (apriori). 3. Semi-supervisado: mezcla datos etiquetados/no etiquetados. 4. Refuerzo: agente aprende trial-and-error, maximizando recompensa (Q-learning, Deep RL). Aplicaciones: visión computacional (CNN), NLP (transformers), recomendación, detección anomalías. Métricas evaluación: accuracy, precision/recall/F1, AUC-ROC, MSE/MAE. Desafíos: overfitting, datos insuficientes, bias, interpretabilidad.",
+    "negatives": [
+      "El aprendizaje automático solo se usa para clasificación de imágenes.",
+      "Los algoritmos de aprendizaje automático siempre son superiores al juicio humano.",
+      "El aprendizaje automático no requiere datos de entrenamiento previos."
+    ]
+  },
+  {
+    "query": "¿Cómo funciona el sistema inmunológico humano?",
+    "positive": "Sistema inmunológico: defensa organismo contra patógenos. Inmune innato: barreras físicas (piel, mucosas), células fagocíticas (neutrófilos, macrófagos), NK cells, complemento, inflamación aguda. Inmune adaptativo: linfocitos B (anticuerpos, inmunidad humoral) y T (citotóxicos helper, inmunidad celular), memoria inmunológica. Órganos: médula ósea (hematopoyesis), timo (maduración T), bazo/linf nodes (filtrado), tonsils/appendix (tejido linfoide). Respuesta inmune: reconocimiento antígeno → activación → proliferación clonal → eliminación patógeno → memoria. Inmunodeficiencias: congénitas (SCID), adquiridas (VIH), autoinmunes (lupus, artritis reumatoide), hipersensibilidad (alergias, anafilaxia). Vacunas: estimulan memoria sin enfermedad. Citocinas: mensajeros moleculares (IL-1, TNF-α, IFN-γ).",
+    "negatives": [
+      "El sistema inmunológico solo protege contra virus, no contra bacterias.",
+      "Las vacunas funcionan creando anticuerpos que duran toda la vida.",
+      "El sistema inmunológico innato es más importante que el adaptativo."
+    ]
+  },
+  {
+    "query": "¿Cuáles son los principios fundamentales de la microeconomía?",
+    "positive": "Microeconomía: estudio decisiones económicas individuales/agentes. Principios: 1. Escasez: recursos limitados vs necesidades ilimitadas. 2. Elección racional: maximización utilidad sujeto restricciones. 3. Oferta-demanda: equilibrio mercado determina precios. 4. Elasticidad: sensibilidad cantidad/precio cambios. 5. Costos: explícitos vs implícitos, marginales, oportunidad. 6. Competencia perfecta: muchos compradores/vendedores, información perfecta, libre entrada/salida. 7. Fallos mercado: externalidades, bienes públicos, monopolios. 8. Teoría consumidor: curvas indiferencia, restricción presupuesto. 9. Teoría productor: función producción, costos, beneficios. 10. Juegos estratégicos: teoría juegos, equilibrio Nash. 11. Información asimétrica: selección adversa, riesgo moral. 12. Elección pública: votación, burocracia, regulación.",
+    "negatives": [
+      "La microeconomía solo estudia el comportamiento de las empresas grandes.",
+      "En mercados perfectos, los precios nunca cambian por oferta y demanda.",
+      "Los costos de oportunidad no son importantes en decisiones económicas."
+    ]
+  },
+  {
+    "query": "¿Cómo funciona la fotosíntesis en las plantas?",
+    "positive": "Fotosíntesis: proceso plantas convierten luz solar, CO2, H2O en glucosa + O2. Etapas: 1. Captación luz: clorofila absorbe luz visible (400-700nm), máximo azul/rojo. 2. Fase luminosa (tilacoides): fotofosforilación, NADP+ → NADPH, ADP → ATP, agua divide liberando O2. 3. Fase oscura (estroma): ciclo Calvin, CO2 fija en azúcar usando ATP/NADPH. Enzimas clave: rubisco (carboxilación), ATP sintasa. Factores limitantes: intensidad luz, concentración CO2, temperatura, agua. Eficiencia: ~1-2% conversión energía solar. Tipos: C3 (mayoría plantas), C4 (maíz, azúcar), CAM (cactus). Importancia: produce oxígeno atmósfera, base cadena trófica, secuestra carbono, produce alimentos/biomassa. Adaptaciones: plantas sombra vs sol, estacionales.",
+    "negatives": [
+      "La fotosíntesis solo ocurre durante el día cuando hay luz solar directa.",
+      "Todas las plantas verdes realizan fotosíntesis de la misma manera.",
+      "La fotosíntesis solo produce oxígeno como subproducto no esencial."
+    ]
+  },
+  {
+    "query": "¿Qué es la inteligencia emocional y por qué es importante?",
+    "positive": "Inteligencia emocional (IE): capacidad reconocer, comprender, gestionar emociones propias/ajenas. Componentes Goleman: 1. Autoconciencia: reconocer emociones, fortalezas/debilidades. 2. Autorregulación: controlar impulsos, adaptabilidad, conciencia ética. 3. Motivación: entusiasmo, perseverancia, optimismo. 4. Empatía: entender perspectivas otros, ayudar desarrollo. 5. Habilidades sociales: comunicación efectiva, resolución conflictos, liderazgo. Importancia: mejor rendimiento laboral (líderes con alta IE 20% más efectivos), relaciones saludables, salud mental (reduce estrés, ansiedad), toma decisiones (equilibra razón-emoción). Desarrollo: mindfulness, feedback 360°, coaching, lectura emociones (microexpresiones). Medición: tests MSCEIT, EQ-i 2.0. Aplicaciones: educación (bullying reducción), empresas (cultura positiva), salud (cumplimiento tratamientos), liderazgo transformacional.",
+    "negatives": [
+      "La inteligencia emocional solo es importante para trabajos relacionados con personas.",
+      "La inteligencia emocional se nace con ella y no se puede desarrollar.",
+      "La inteligencia emocional es más importante que la inteligencia cognitiva."
+    ]
+  }
+]

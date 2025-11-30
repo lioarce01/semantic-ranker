@@ -10,7 +10,13 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from transformers import AdamW, get_linear_schedule_with_warmup
+from torch.optim import AdamW
+
+try:
+    from transformers import get_linear_schedule_with_warmup
+except ImportError:
+    # Fallback for newer transformers versions
+    from torch.optim.lr_scheduler import get_linear_schedule_with_warmup
 from tqdm import tqdm
 import json
 

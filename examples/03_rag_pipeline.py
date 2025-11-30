@@ -32,22 +32,22 @@ def main():
     logger.info("Step 1: Initializing RAG pipeline...")
 
     # Option A: Without reranker (retrieval only)
-    pipeline_no_rerank = RAGPipeline(
-        retriever_model="sentence-transformers/all-MiniLM-L6-v2",
-        reranker_model=None,  # No reranker
-        top_k_retrieval=10,
-        top_k_rerank=3
-    )
-
-    # Option B: With reranker (two-stage retrieval)
-    # pipeline = RAGPipeline(
+    # pipeline_no_rerank = RAGPipeline(
     #     retriever_model="sentence-transformers/all-MiniLM-L6-v2",
-    #     reranker_model="./models/basic_reranker/final",  # Use trained reranker
+    #     reranker_model=None,  # No reranker
     #     top_k_retrieval=10,
     #     top_k_rerank=3
     # )
 
-    pipeline = pipeline_no_rerank  # Use no-rerank version for demo
+    Option B: With reranker (two-stage retrieval)
+    pipeline_with_reranker = RAGPipeline(
+        retriever_model="sentence-transformers/all-MiniLM-L6-v2",
+        reranker_model="./models/basic_reranker/final",  # Use trained reranker
+        top_k_retrieval=10,
+        top_k_rerank=3
+    )
+
+    pipeline = pipeline_with_reranker # Use no-rerank version for demo
 
     # 2. Index documents
     logger.info("\nStep 2: Indexing documents...")
