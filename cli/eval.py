@@ -153,7 +153,7 @@ def main():
     print("="*50)
 
     for metric_name, value in metrics.items():
-        print("10.4f")
+        print(f"{metric_name}: {value:.4f}")
 
     # Performance interpretation
     ndcg_at_10 = metrics.get('ndcg@10', 0)
