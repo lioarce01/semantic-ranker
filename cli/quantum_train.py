@@ -163,7 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train with Quantum Resonance Fine-Tuning')
     parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
                        default='msmarco', help='Dataset to use for training')
-    parser.add_argument('--model-name', default='distilbert-base-uncased',
+    parser.add_argument('--model-name', default='bert-base-uncased',
                        help='Pretrained model name')
     parser.add_argument('--output-dir', default='./models/quantum_trained_model',
                        help='Output directory for trained model')
@@ -215,10 +215,11 @@ def main():
         logger.info(f"✅ Loaded {len(train_data)} training samples")
 
         # 2. Initialize quantum resonance trainer
-        logger.info("
-🧬 Step 2: Initializing Quantum Resonance Trainer..."        logger.info(f"   Mode: {args.quantum_mode}")
+        logger.info("\n🧬 Step 2: Initializing Quantum Resonance Trainer...")
+        logger.info(f"   Mode: {args.quantum_mode}")
         logger.info(f"   Phase: {args.quantum_phase}")
-        logger.info(".1f"        logger.info(".1f"
+        logger.info(f"   Resonance Threshold: {args.resonance_threshold:.1f}")
+        logger.info(f"   Entanglement Weight: {args.entanglement_weight:.1f}")
         # Create base trainer
         trainer = CrossEncoderTrainer(
             model_name=args.model_name,
@@ -249,8 +250,8 @@ def main():
             quantum_train_data = quantum_trainer.collapse_superposition(train_data)
 
         # 4. Prepare data for training
-        logger.info("
-📊 Step 4: Preparing training data..."        preprocessor = DataPreprocessor(tokenizer_name=args.model_name)
+        logger.info("\n📊 Step 4: Preparing training data...")
+        preprocessor = DataPreprocessor(tokenizer_name=args.model_name)
 
         # Convert to training format
         if hasattr(quantum_train_data[0], 'documents'):
@@ -276,14 +277,14 @@ def main():
         logger.info(f"   LoRA enabled: {args.use_lora}")
 
         # Custom training loop with quantum loss
-        optimizer = torch.optim.AdamW(trainer.model.parameters(), lr=args.learning_rate)
+        optimizer = torch.optim.AdamW(trainer.model.model.parameters(), lr=args.learning_rate)
         scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=100)
 
         best_loss = float('inf')
 
         for epoch in range(args.epochs):
             logger.info(f"\nEpoch {epoch + 1}/{args.epochs}")
-            trainer.model.train()
+            trainer.model.model.train()
 
             epoch_loss = 0.0
             num_batches = 0
@@ -298,12 +299,12 @@ def main():
                 labels = torch.tensor([item[2] for item in batch], dtype=torch.float)
 
                 # Forward pass
-                inputs = trainer.tokenizer(
+                inputs = trainer.model.tokenizer(
                     queries,
                     documents,
                     truncation=True,
                     padding=True,
-                    max_length=trainer.max_length,
+                    max_length=trainer.model.max_length,
                     return_tensors='pt'
                 )
 
@@ -311,7 +312,7 @@ def main():
                     inputs = {k: v.cuda() for k, v in inputs.items()}
                     labels = labels.cuda()
 
-                outputs = trainer.model(**inputs)
+                outputs = trainer.model.model(**inputs)
                 predictions = outputs.logits
 
                 # Quantum loss
@@ -327,9 +328,9 @@ def main():
                 num_batches += 1
 
                 if batch_idx % 50 == 0:
-                    logger.info(".4f"
+                    logger.info(f"   Loss: {epoch_loss / (batch_idx + 1):.4f}")
             avg_epoch_loss = epoch_loss / num_batches
-            logger.info(".4f"
+            logger.info(f"   Average Loss: {avg_epoch_loss:.4f}")
             # Save best model
             if avg_epoch_loss < best_loss:
                 best_loss = avg_epoch_loss
@@ -338,10 +339,10 @@ def main():
 
         # 6. Final save
         trainer.save_model(args.output_dir, save_best=False)
-        logger.info("
-🎉 Quantum training completed!"        logger.info(f"📁 Model saved to: {args.output_dir}")
-        logger.info("
-🧬 Quantum resonance patterns learned!"        logger.info("   - Query-document relationships modeled as quantum states")
+        logger.info("\n🎉 Quantum training completed!")
+        logger.info(f"📁 Model saved to: {args.output_dir}")
+        logger.info("\n🧬 Quantum resonance patterns learned!")
+        logger.info("   - Query-document relationships modeled as quantum states")
         logger.info("   - Resonance frequencies computed for optimal ranking")
         logger.info("   - Entanglement coherence maintained across related queries")
 

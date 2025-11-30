@@ -12,6 +12,7 @@ from pathlib import Path
 import argparse
 import random
 import torch
+import numpy as np
 
 # Add the parent directory to sys.path
 current_dir = Path(__file__).parent
@@ -42,6 +43,19 @@ class QuantumResonanceRetainer:
     def analyze_existing_resonance(self, model, existing_data):
         """Analyze resonance patterns in existing model."""
         logger.info("🔬 Analyzing existing quantum resonance patterns...")
+
+        if existing_data is None or len(existing_data) == 0:
+            logger.warning("⚠️ No data available for analysis, using default patterns")
+            # Create some default resonance patterns
+            default_patterns = {
+                "default_query": 0.5,  # Neutral resonance
+                "information_query": 0.6,
+                "factual_query": 0.7,
+                "complex_query": 0.4
+            }
+            self.resonance_memory.update(default_patterns)
+            logger.info("✅ Using default resonance patterns")
+            return
 
         model.model.eval()
         resonance_patterns = {}
@@ -132,13 +146,18 @@ def find_best_model():
         if model_dir.is_dir():
             best_path = model_dir / "best"
             # Check for both regular models and LoRA models
-            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
+            has_model = ((best_path / "model.safetensors").exists() or
+                        (best_path / "adapter_model.safetensors").exists() or
+                        (best_path / "pytorch_model.bin").exists())
             if best_path.exists() and has_model:
                 mtime = best_path.stat().st_mtime
                 best_models.append((str(best_path), mtime, model_dir.name))
 
     if not best_models:
         logger.error("❌ No trained models found. Train a model first.")
+        logger.error("   Make sure your model directory contains:")
+        logger.error("   - adapter_model.safetensors (for LoRA models)")
+        logger.error("   - model.safetensors or pytorch_model.bin (for regular models)")
         return None
 
     best_models.sort(key=lambda x: x[1], reverse=True)
@@ -210,20 +229,60 @@ def main():
         logger.info(f"✅ Loaded {len(additional_data)} additional samples")
 
         # 4. Initialize quantum retainer
-        logger.info("
-🧬 Initializing Quantum Resonance Retainer..."        logger.info(f"   Mode: {args.quantum_mode}")
-        logger.info(".1f"        logger.info(".1f"
-        # Create trainer
-        trainer = CrossEncoderTrainer(
-            model_name="distilbert-base-uncased",  # Not used for retraining
-            num_labels=1,
-            loss_function="bce"
-        )
+        logger.info("\n🧬 Initializing Quantum Resonance Retainer...")
+        logger.info(f"   Mode: {args.quantum_mode}")
+        logger.info(f"   Preserve Knowledge: {args.preserve_knowledge:.1f}")
+        logger.info(f"   Resonance Alignment: {args.resonance_alignment:.1f}")
+        # Create a minimal trainer class for quantum retraining
+        # Don't create CrossEncoderTrainer since model already has LoRA applied
+        class QuantumTrainer:
+            def __init__(self, model, tokenizer, max_length):
+                self.model = model
+                self.tokenizer = tokenizer
+                self.max_length = max_length
 
-        # Use existing model
-        trainer.model = existing_model.model
-        trainer.tokenizer = existing_model.tokenizer
-        trainer.max_length = existing_model.max_length
+            def save_model(self, output_dir, save_best=False):
+                """Save the quantum retrained model"""
+                from pathlib import Path
+                output_path = Path(output_dir)
+                output_path.mkdir(parents=True, exist_ok=True)
+
+                if save_best:
+                    save_path = output_path / "best"
+                else:
+                    save_path = output_path / "final"
+
+                save_path.mkdir(exist_ok=True)
+
+                # Save model
+                self.model.save_pretrained(save_path)
+
+                # Save tokenizer
+                self.tokenizer.save_pretrained(save_path)
+
+                # Save configuration
+                import json
+                config = {
+                    "model_name": "bert-base-uncased",
+                    "num_labels": 1,
+                    "max_length": self.max_length,
+                    "use_lora": True,
+                    "lora_config": {
+                        "lora_r": 8,
+                        "lora_alpha": 16
+                    }
+                }
+
+                with open(save_path / "model_config.json", 'w') as f:
+                    json.dump(config, f, indent=2)
+
+                logger.info(f"Model saved to {save_path}")
+
+        trainer = QuantumTrainer(
+            model=existing_model.model,
+            tokenizer=existing_model.tokenizer,
+            max_length=existing_model.max_length
+        )
 
         # Wrap with quantum retainer
         quantum_retrainer = QuantumResonanceRetainer(
@@ -233,10 +292,17 @@ def main():
         # 5. Optional: Analyze existing resonance patterns
         if args.analyze_existing:
             logger.info("🔬 Analyzing existing model resonance patterns...")
-            # Load some existing data for analysis (MS MARCO sample)
-            loader = MSMARCODataLoader()
-            existing_train, _, _ = loader.load_and_split(max_samples=200)
-            quantum_retrainer.analyze_existing_resonance(trainer.model, existing_train)
+
+            # Try to load MS MARCO data, but fallback if permissions fail
+            try:
+                loader = MSMARCODataLoader()
+                existing_train, _, _ = loader.load_and_split(max_samples=200)
+                quantum_retrainer.analyze_existing_resonance(trainer.model, existing_train)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not load MS MARCO for analysis: {e}")
+                logger.warning("Using default resonance patterns instead")
+                quantum_retrainer.analyze_existing_resonance(trainer.model, None)
+                logger.info("💡 Continuing with quantum retraining using default patterns...")
 
         # 6. Prepare additional data
         logger.info("📊 Preparing additional data for quantum retraining...")
@@ -256,12 +322,13 @@ def main():
         # 7. Setup retraining
         logger.info("⚙️ Setting up quantum retraining...")
 
-        # Detect LoRA
+        # Detect and configure LoRA parameters
         use_lora = hasattr(existing_model, 'use_lora') and existing_model.use_lora
-        logger.info(f"📍 Detected LoRA configuration in loaded model: {use_lora}")
+        logger.info(f"📍 Model has LoRA: {use_lora}")
 
         if use_lora:
-            logger.info("   LoRA rank: 8, alpha: 16"            # Freeze base model for LoRA
+            logger.info("   Using existing LoRA configuration")
+            # Freeze base model parameters
             for param in trainer.model.parameters():
                 param.requires_grad = False
 
@@ -270,7 +337,7 @@ def main():
                 if 'lora' in name.lower():
                     param.requires_grad = True
         else:
-            # Unfreeze all parameters for full fine-tuning
+            # No LoRA, unfreeze all parameters
             for param in trainer.model.parameters():
                 param.requires_grad = True
 
@@ -348,9 +415,9 @@ def main():
                 num_batches += 1
 
                 if batch_idx % 50 == 0:
-                    logger.info(".4f"
+                    logger.info(f"   Loss: {epoch_loss / (batch_idx + 1):.4f}")
             avg_epoch_loss = epoch_loss / num_batches
-            logger.info(".4f"
+            logger.info(f"   Average Loss: {avg_epoch_loss:.4f}")
             # Save best model
             if avg_epoch_loss < best_loss:
                 best_loss = avg_epoch_loss
@@ -360,16 +427,16 @@ def main():
         # 10. Final save
         trainer.save_model(output_dir, save_best=False)
 
-        logger.info("
-🎉 Quantum retraining completed!"        logger.info(f"📁 Model saved to: {output_dir}")
-        logger.info("
-🧬 Quantum adaptation successful!"        logger.info("   - Existing knowledge preserved with quantum principles")
+        logger.info("\n🎉 Quantum retraining completed!")
+        logger.info(f"📁 Model saved to: {output_dir}")
+        logger.info("\n🧬 Quantum adaptation successful!")
+        logger.info("   - Existing knowledge preserved with quantum principles")
         logger.info("   - New domain resonance patterns learned")
         logger.info("   - Improved performance on difficult examples")
 
         # Suggest evaluation
-        logger.info("
-🧪 Next steps:"        logger.info(f"   python cli/eval.py --dataset {args.dataset} --model-path {output_dir}/best")
+        logger.info("\n🧪 Next steps:")
+        logger.info(f"   python cli/eval.py --dataset {args.dataset} --model-path {output_dir}/best")
         logger.info(f"   python scripts/benchmark_comparison.py --dataset {args.dataset} --model-path {output_dir}/best")
 
     except Exception as e:

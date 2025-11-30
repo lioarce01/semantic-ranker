@@ -382,6 +382,20 @@ class CrossEncoderTrainer:
         avg_loss = total_loss / len(val_loader)
         return avg_loss
 
+    def save_model(self, output_dir: str, save_best: bool = False):
+        """
+        Save model to disk.
+
+        Args:
+            output_dir: Output directory
+            save_best: Whether to save as best model
+        """
+        checkpoint_name = "best" if save_best else "final"
+        save_path = os.path.join(output_dir, checkpoint_name)
+        os.makedirs(save_path, exist_ok=True)
+        self.model.save(save_path)
+        logger.info(f"Model saved to {save_path}")
+
     def _save_model(self, output_dir: str, checkpoint_name: str):
         """
         Save model checkpoint.
