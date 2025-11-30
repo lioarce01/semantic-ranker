@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 
 from semantic_ranker.evaluation.evaluator import RankerEvaluator
 from semantic_ranker.data.data_loader import MSMARCODataLoader
+from cli.eval import find_best_model
 
 def load_benchmark_results():
     """Carga resultados de benchmarks conocidos"""
@@ -76,9 +77,17 @@ def convert_data_format(data):
 
     return converted
 
-def evaluate_model(model_path="models/basic_reranker/best"):
-    """Evalúa el modelo actual en el test set"""
-    print("🔍 Evaluando modelo actual...")
+def evaluate_model():
+    """Evalúa el mejor modelo disponible en el test set"""
+    print("🔍 Evaluando el mejor modelo disponible...")
+
+    # Encontrar el mejor modelo automáticamente
+    model_path = find_best_model()
+    if not model_path:
+        print("❌ No se encontró ningún modelo entrenado")
+        return None
+
+    print(f"📍 Usando modelo: {model_path}")
 
     # Cargar datos de test
     loader = MSMARCODataLoader()

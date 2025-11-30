@@ -68,14 +68,28 @@ def prepare_eval_data(dataset_name, num_samples=100):
     formatted_data = []
     for item in eval_data:
         query = item.get('query', '')
-        positive = item.get('positive', item.get('document', ''))
-        negatives = item.get('negatives', [])
 
-        if not query or not positive:
+        # Handle both old format (positive/negatives) and new format (documents/labels)
+        if 'documents' in item and 'labels' in item:
+            # New format - already correct
+            documents = item['documents']
+            labels = item['labels']
+        elif 'positive' in item:
+            # Old format - convert
+            positive = item.get('positive', '')
+            negatives = item.get('negatives', [])
+
+            if not positive:
+                continue
+
+            documents = [positive] + negatives[:3]  # Up to 3 negatives
+            labels = [1] + [0] * len(documents[1:])
+        else:
+            # Unknown format
             continue
 
-        documents = [positive] + negatives[:3]  # Up to 3 negatives
-        labels = [1] + [0] * len(documents[1:])
+        if not query or not documents:
+            continue
 
         formatted_data.append({
             'query': query,

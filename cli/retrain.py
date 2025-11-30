@@ -126,13 +126,37 @@ def main():
     # Use the loaded model
     trainer.model = model
 
-    # 5. Retrain
+    # 5. Prepare validation data
+    logger.info("Preparing validation data...")
+    val_samples = None
+    if val_data:
+        try:
+            # Convert validation data to the same format as training
+            val_samples = []
+            for item in val_data:
+                query = item['query']
+                documents = item['documents']
+                labels = item['labels']
+
+                # Create individual validation samples
+                for doc, label in zip(documents, labels):
+                    val_samples.append((query, doc, float(label)))
+
+            logger.info(f"✅ Created {len(val_samples)} validation samples")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to create validation samples: {e}")
+            logger.warning("Training without validation...")
+            val_samples = None
+
+    # 6. Retrain
     base_model_dir = Path(model_path).parent.parent
-    output_dir = str(base_model_dir) + args.suffix
+    model_name = Path(model_path).parent.name  # e.g., "basic_reranker"
+    output_dir = str(base_model_dir / (model_name + args.suffix))
 
     logger.info(f"Starting retraining for {args.epochs} epochs...")
     history = trainer.train(
         train_samples=training_samples,
+        val_samples=val_samples,
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
