@@ -266,10 +266,12 @@ def main():
                     "model_name": "bert-base-uncased",
                     "num_labels": 1,
                     "max_length": self.max_length,
-                    "use_lora": True,
                     "lora_config": {
+                        "use_lora": True,
                         "lora_r": 8,
-                        "lora_alpha": 16
+                        "lora_alpha": 16,
+                        "lora_dropout": 0.1,
+                        "lora_target_modules": ["query", "key", "value"]
                     }
                 }
 
