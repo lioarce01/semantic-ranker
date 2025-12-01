@@ -126,9 +126,3 @@ python scripts/benchmark_comparison.py --dataset msmarco_dev_benchmark --model-p
 - **Quantum Ensembles**: Combinar múltiples modelos cuánticos
 - **Temporal Resonance**: Modelar evolución de queries en el tiempo
 - **Cross-Lingual Quantum**: Transferencia entre idiomas usando resonancia
-
----
-
-## 🚀 ¡Experimenta con la Nueva Era del Fine-Tuning!
-
-Esta estrategia representa un salto conceptual en cómo pensamos sobre el aprendizaje de rankings. ¿Qué resultados obtendrás con tu primer experimento cuántico? 🤔✨
