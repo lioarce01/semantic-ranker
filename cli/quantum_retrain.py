@@ -179,6 +179,8 @@ def main():
                        help='Batch size for retraining')
     parser.add_argument('--model-path', help='Specific model path to retrain (optional)')
     parser.add_argument('--output-dir', help='Output directory for retrained model (optional)')
+    parser.add_argument('--max-samples', type=int,
+                       help='Maximum number of samples to load from dataset (optional)')
 
     # Quantum-specific arguments
     parser.add_argument('--quantum-mode', choices=['adaptation', 'resonance', 'entanglement'],
@@ -197,6 +199,7 @@ def main():
     logger.info(f"Additional dataset: {args.dataset}")
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Learning rate: {args.learning_rate}")
+    logger.info(f"Max samples requested: {getattr(args, 'max_samples', 'None')}")
     logger.info(f"Quantum mode: {args.quantum_mode}")
 
     try:
@@ -225,7 +228,9 @@ def main():
             sys.exit(1)
 
         custom_loader = CustomDataLoader()
-        additional_data = custom_loader.load_from_json(dataset_path)
+        max_samples_requested = getattr(args, 'max_samples', None)
+        logger.info(f"📊 Requested max_samples: {max_samples_requested}")
+        additional_data = custom_loader.load_from_json(dataset_path, max_samples=max_samples_requested)
         logger.info(f"✅ Loaded {len(additional_data)} additional samples")
 
         # 4. Initialize quantum retainer
