@@ -280,3 +280,51 @@ def aggregate_metrics(
         aggregated[metric_name] = np.mean(values) if values else 0.0
 
     return aggregated
+
+
+class RankingMetrics:
+    """
+    Class wrapper for ranking metrics computation.
+    Provides a consistent interface for evaluation.
+    """
+
+    def __init__(self):
+        """Initialize metrics calculator."""
+        pass
+
+    def ndcg_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute NDCG@k."""
+        return compute_ndcg(relevance_labels, k)
+
+    def mrr_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute MRR@k."""
+        return compute_mrr(relevance_labels, k)
+
+    def map_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute MAP@k."""
+        return compute_map(relevance_labels, k)
+
+    def precision_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute Precision@k."""
+        return compute_precision_at_k(relevance_labels, k)
+
+    def recall_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute Recall@k."""
+        return compute_recall_at_k(relevance_labels, k)
+
+    def hit_rate_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute Hit Rate@k."""
+        return compute_hit_rate(relevance_labels, k)
+
+    def f1_at_k(self, relevance_labels: List[int], k: int) -> float:
+        """Compute F1@k."""
+        return compute_f1_at_k(relevance_labels, k)
+
+    def compute_all_metrics(
+        self,
+        relevance_labels: List[int],
+        relevance_scores: Optional[List[float]] = None,
+        k_values: List[int] = [1, 3, 5, 10]
+    ) -> Dict[str, float]:
+        """Compute all metrics."""
+        return compute_all_metrics(relevance_labels, relevance_scores, k_values)

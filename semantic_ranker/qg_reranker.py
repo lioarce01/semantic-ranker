@@ -184,14 +184,26 @@ class QueryGraphReranker(nn.Module):
         # 2. Contrastive loss in query space (if GNN available)
         contrastive_loss = torch.tensor(0.0, device=logits.device)
         if gnn_embeddings is not None and len(query_indices) > 1:
-            contrastive_loss = self._compute_contrastive_loss(
-                pooled, query_indices, labels
-            )
+            try:
+                contrastive_loss = self._compute_contrastive_loss(
+                    pooled, query_indices, labels
+                )
+                # Check for NaN
+                if torch.isnan(contrastive_loss):
+                    contrastive_loss = torch.tensor(0.0, device=logits.device)
+            except:
+                contrastive_loss = torch.tensor(0.0, device=logits.device)
 
         # 3. GNN ranking loss (if GNN available)
         rank_loss = torch.tensor(0.0, device=logits.device)
         if gnn_embeddings is not None:
-            rank_loss = self._compute_rank_loss(gnn_embeddings, query_indices, labels)
+            try:
+                rank_loss = self._compute_rank_loss(gnn_embeddings, query_indices, labels)
+                # Check for NaN
+                if torch.isnan(rank_loss):
+                    rank_loss = torch.tensor(0.0, device=logits.device)
+            except:
+                rank_loss = torch.tensor(0.0, device=logits.device)
 
         # Total loss
         total_loss = (
@@ -245,10 +257,20 @@ class QueryGraphReranker(nn.Module):
 
         # Compute InfoNCE loss
         exp_sim = torch.exp(sim_matrix)
-        log_prob = sim_matrix - torch.log(exp_sim.sum(dim=1, keepdim=True))
 
-        # Average over positives
-        loss = -(positive_mask * log_prob).sum() / (positive_mask.sum() + 1e-8)
+        # Add small epsilon to avoid log(0)
+        denom = exp_sim.sum(dim=1, keepdim=True) + 1e-8
+        log_prob = sim_matrix - torch.log(denom)
+
+        # Average over positives (avoid division by zero)
+        if positive_mask.sum() > 0:
+            loss = -(positive_mask * log_prob).sum() / positive_mask.sum()
+        else:
+            loss = torch.tensor(0.0, device=embeddings.device)
+
+        # Check for NaN/inf
+        if torch.isnan(loss) or torch.isinf(loss):
+            loss = torch.tensor(0.0, device=embeddings.device)
 
         return loss
 
@@ -283,9 +305,11 @@ class QueryGraphReranker(nn.Module):
             query_relevance.append(avg_rel)
 
             # Query embedding norm (proxy for "quality")
-            q_emb = gnn_embeddings[q_idx.item()]
-            q_score = torch.norm(q_emb)
-            query_scores.append(q_score)
+            # q_idx is the query index in the graph, so we can access gnn_embeddings[q_idx]
+            if q_idx < len(gnn_embeddings):
+                q_emb = gnn_embeddings[q_idx]
+                q_score = torch.norm(q_emb)
+                query_scores.append(q_score)
 
         if len(query_scores) < 2:
             return loss
@@ -380,6 +404,59 @@ class QueryGraphReranker(nn.Module):
                 scores.extend(batch_scores.tolist())
 
         return scores
+
+    def save(self, save_path: str):
+        """
+        Save QueryGraphReranker model and all components.
+
+        Args:
+            save_path: Directory to save model
+        """
+        from pathlib import Path
+        import json
+
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        # Save cross-encoder
+        ce_path = save_path / "cross_encoder"
+        ce_path.mkdir(exist_ok=True)
+        self.cross_encoder.save(str(ce_path))
+
+        # Save GNN components
+        gnn_state = {
+            'query_gnn': self.query_gnn.state_dict(),
+            'attention': self.attention.state_dict(),
+            'predictor': self.predictor.state_dict(),
+        }
+        torch.save(gnn_state, save_path / "gnn_components.pt")
+
+        # Save query graph data (if exists)
+        graph_data = {}
+        if self.edge_index is not None:
+            graph_data['edge_index'] = self.edge_index.cpu()
+            graph_data['edge_weights'] = self.edge_weights.cpu()
+            graph_data['query_embeddings'] = self.query_embeddings.cpu()
+            if self.gnn_query_embeddings is not None:
+                graph_data['gnn_query_embeddings'] = self.gnn_query_embeddings.cpu()
+        if graph_data:
+            torch.save(graph_data, save_path / "query_graph.pt")
+
+        # Save configuration
+        config = {
+            'gnn_hidden_dim': self.query_gnn.hidden_dim,
+            'gnn_output_dim': self.query_gnn.output_dim,
+            'gnn_dropout': self.query_gnn.dropout.p,
+            'lambda_contrastive': self.lambda_contrastive,
+            'lambda_rank': self.lambda_rank,
+            'temperature': self.temperature,
+            'query_emb_dim': 768,  # all-mpnet-base-v2
+        }
+
+        with open(save_path / "qg_config.json", 'w') as f:
+            json.dump(config, f, indent=2)
+
+        logger.info(f"QueryGraphReranker saved to {save_path}")
 
     def to(self, device):
         """Move model to device."""

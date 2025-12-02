@@ -325,12 +325,10 @@ def main():
     # Save model
     experiment_name = args.experiment_name or f"qg_rerank_{config.data.dataset}"
     output_dir = Path('models') / experiment_name / 'best'
-    output_dir = Path('models') / model_name / 'best'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Saving model to {output_dir}")
-    save_config_with_model(config, output_dir.parent)
-    torch.save(model.state_dict(), output_dir / 'model.pt')
+    model.save(str(output_dir))
     save_config_with_model(config, output_dir.parent)
 
     logger.info("Training completed successfully")
