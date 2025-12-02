@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Evaluate trained model on BEIR benchmark datasets (simple version without BM25).
+Evaluate trained model on BEIR benchmark datasets with BM25 first-stage retrieval.
 BEIR provides diverse out-of-domain datasets for robust evaluation.
 """
 
@@ -27,15 +27,15 @@ from semantic_ranker.models import CrossEncoderModel
 
 
 def evaluate_on_beir(model_path: str, dataset_name: str, split: str = "test",
-                     max_docs_per_query: int = 1000, score_batch_size: int = 32):
+                     top_k: int = 1000, score_batch_size: int = 32):
     """
-    Evaluate model on BEIR dataset (simple version with batched scoring).
+    Evaluate model on BEIR dataset with BM25 first-stage retrieval.
 
     Args:
         model_path: Path to trained model
         dataset_name: BEIR dataset name (e.g., 'nfcorpus', 'scifact', 'fiqa')
         split: Dataset split to use (default: 'test')
-        max_docs_per_query: Max documents to score per query (default: 1000)
+        top_k: Number of BM25 candidates to rerank (default: 1000)
         score_batch_size: Batch size for cross-encoder scoring (default: 32)
     """
     try:
@@ -43,9 +43,10 @@ def evaluate_on_beir(model_path: str, dataset_name: str, split: str = "test",
         from beir.datasets.data_loader import GenericDataLoader
         from beir.retrieval.evaluation import EvaluateRetrieval
         from tqdm import tqdm
+        from rank_bm25 import BM25Okapi
     except ImportError as e:
         logger.error(f"❌ Missing dependency: {e}")
-        logger.error("Run: pip install beir")
+        logger.error("Run: pip install beir rank-bm25")
         sys.exit(1)
 
     logger.info(f"📥 Downloading BEIR dataset: {dataset_name}")
@@ -67,46 +68,54 @@ def evaluate_on_beir(model_path: str, dataset_name: str, split: str = "test",
     logger.info(f"🤖 Loading model from: {model_path}")
     model = CrossEncoderModel.load(model_path)
 
-    # Score documents with cross-encoder (batched for efficiency)
+    # Build BM25 index
+    logger.info(f"🔍 Building BM25 index for first-stage retrieval...")
     corpus_items = list(corpus.items())
+    doc_ids = [doc_id for doc_id, _ in corpus_items]
+    doc_texts = [doc_data.get('text', '') for _, doc_data in corpus_items]
 
-    # Decide whether to score all docs or limit
-    if len(corpus_items) <= max_docs_per_query:
-        logger.info(f"🔄 Scoring ALL {len(corpus_items)} documents per query (batch_size={score_batch_size})")
-        total_predictions = len(queries) * len(corpus_items)
-    else:
-        logger.info(f"⚠️ Large corpus ({len(corpus_items)} docs), limiting to {max_docs_per_query} per query")
-        total_predictions = len(queries) * max_docs_per_query
+    # Tokenize for BM25
+    tokenized_corpus = [doc.lower().split() for doc in doc_texts]
+    bm25 = BM25Okapi(tokenized_corpus)
+    logger.info(f"✅ BM25 index built for {len(corpus_items)} documents")
 
+    # Two-stage retrieval: BM25 → Cross-encoder reranking
+    logger.info(f"🔄 Stage 1: BM25 retrieval (top-{top_k} per query)")
+    logger.info(f"🔄 Stage 2: Cross-encoder reranking (batch_size={score_batch_size})")
+
+    total_predictions = len(queries) * min(top_k, len(corpus_items))
     logger.info(f"📊 Total predictions: {total_predictions:,} (~{total_predictions // score_batch_size:,} batches)")
 
     results = {}
 
-    for query_id in tqdm(list(queries.keys()), desc="Scoring queries"):
+    for query_id in tqdm(list(queries.keys()), desc="Reranking queries"):
         if query_id not in qrels:
             continue
 
         query_text = queries[query_id]
 
-        # Get documents to score (all for small datasets, first N for large)
-        docs_to_score = corpus_items if len(corpus_items) <= max_docs_per_query else corpus_items[:max_docs_per_query]
+        # Stage 1: BM25 retrieval
+        tokenized_query = query_text.lower().split()
+        bm25_scores = bm25.get_scores(tokenized_query)
 
-        # Prepare batches for scoring
-        doc_ids = [doc_id for doc_id, _ in docs_to_score]
-        doc_texts = [doc_data.get('text', '') for _, doc_data in docs_to_score]
-        query_texts = [query_text] * len(doc_ids)
+        # Get top-k candidates
+        top_k_indices = bm25_scores.argsort()[-top_k:][::-1]
+        candidate_doc_ids = [doc_ids[idx] for idx in top_k_indices]
+        candidate_doc_texts = [doc_texts[idx] for idx in top_k_indices]
 
-        # Score all documents in batches
+        # Stage 2: Cross-encoder reranking
+        query_texts = [query_text] * len(candidate_doc_ids)
+
         scores = model.predict(
             query_texts,
-            doc_texts,
+            candidate_doc_texts,
             batch_size=score_batch_size
         )
 
         # Create scored results
-        doc_scores = {doc_id: float(score) for doc_id, score in zip(doc_ids, scores)}
+        doc_scores = {doc_id: float(score) for doc_id, score in zip(candidate_doc_ids, scores)}
 
-        # Sort by score
+        # Sort by cross-encoder score
         results[query_id] = dict(sorted(doc_scores.items(),
                                        key=lambda x: x[1],
                                        reverse=True))
@@ -162,9 +171,13 @@ def evaluate_on_beir(model_path: str, dataset_name: str, split: str = "test",
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Evaluate trained model on BEIR benchmark (simple version)',
+        description='Evaluate trained model on BEIR benchmark with BM25 + cross-encoder reranking',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Two-stage retrieval pipeline:
+  1. BM25 retrieves top-k candidates (fast, lexical matching)
+  2. Cross-encoder reranks candidates (slow, semantic scoring)
+
 Available BEIR datasets:
   Small datasets (good for quick testing):
     - nfcorpus      : Nutrition/medical (3.6k docs)
@@ -177,7 +190,7 @@ Available BEIR datasets:
     - dbpedia-entity: Entity retrieval (4.6M docs)
 
   Large datasets:
-    - msmarco       : Passage ranking (8.8M docs) - your training data!
+    - msmarco       : Passage ranking (8.8M docs)
     - hotpotqa      : Multi-hop QA (5.2M docs)
         """
     )
@@ -191,8 +204,8 @@ Available BEIR datasets:
     parser.add_argument('--split', default='test',
                        choices=['train', 'dev', 'test'],
                        help='Dataset split to use (default: test)')
-    parser.add_argument('--max-docs', type=int, default=1000,
-                       help='Max documents to score per query (default: 1000)')
+    parser.add_argument('--top-k', type=int, default=1000,
+                       help='Number of BM25 candidates to rerank (default: 1000)')
     parser.add_argument('--batch-size', type=int, default=32,
                        help='Batch size for cross-encoder scoring (default: 32)')
 
@@ -241,7 +254,7 @@ Available BEIR datasets:
             str(model_path),
             args.dataset,
             args.split,
-            max_docs_per_query=args.max_docs,
+            top_k=args.top_k,
             score_batch_size=args.batch_size
         )
         logger.info(f"\n✅ Evaluation completed successfully!")

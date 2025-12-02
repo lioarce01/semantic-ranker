@@ -81,8 +81,8 @@ def _apply_cli_overrides(config: Config, args: argparse.Namespace):
         args: Parsed command-line arguments
     """
     # Model overrides
-    if hasattr(args, 'model_name') and args.model_name:
-        config.model.model_name = args.model_name
+    # Note: --model-name is used for output naming, not model selection
+    # The base model is set in the config file (e.g., bert-base-uncased)
     if hasattr(args, 'use_lora') and args.use_lora is not None:
         config.model.use_lora = args.use_lora
     if hasattr(args, 'lora_r') and args.lora_r:

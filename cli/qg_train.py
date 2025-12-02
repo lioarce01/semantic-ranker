@@ -41,6 +41,7 @@ class QGTrainer:
         self.config = config
         self.train_data = train_data
         self.val_data = val_data
+        self.relevant_queries = None  # Will be set during training
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
 
@@ -50,14 +51,7 @@ class QGTrainer:
             weight_decay=config.training.weight_decay
         )
 
-        total_steps = (len(train_data) // config.training.batch_size) * config.training.epochs
-        warmup_steps = int(total_steps * config.training.warmup_ratio)
-
-        self.scheduler = torch.optim.lr_scheduler.LinearLR(
-            self.optimizer,
-            start_factor=0.1,
-            total_iters=warmup_steps
-        )
+        # Scheduler will be initialized in train() method after data filtering
 
     def train(self):
         """Train the model."""
@@ -68,17 +62,47 @@ class QGTrainer:
         train_queries = [sample['query'] for sample in self.train_data]
         unique_queries = list(set(train_queries))
 
+        # Limit queries for memory efficiency (query graphs scale O(n²))
+        max_queries_for_graph = min(200, len(unique_queries))  # Limit to 200 queries max
+        if len(unique_queries) > max_queries_for_graph:
+            logger.warning(f"Limiting query graph to {max_queries_for_graph} queries (from {len(unique_queries)}) for memory efficiency")
+            # Sample diverse queries instead of just taking the first ones
+            import random
+            unique_queries = random.sample(unique_queries, max_queries_for_graph)
+
         # Create query-doc relevance mapping for graph construction
         query_doc_relevance = defaultdict(list)
         query_to_idx = {q: i for i, q in enumerate(unique_queries)}
 
-        for sample in self.train_data:
+        # Only use training samples that match our selected queries
+        relevant_samples = [sample for sample in self.train_data if sample['query'] in unique_queries]
+
+        for sample in relevant_samples:
             query_idx = query_to_idx[sample['query']]
             if sample['label'] == 1:
                 query_doc_relevance[query_idx].append(hash(sample['document']) % 10000)
 
         self.model.build_query_graph(unique_queries, dict(query_doc_relevance))
         logger.info(f"Query graph built with {len(unique_queries)} nodes")
+
+        # Store relevant queries for consistent indexing during training
+        self.relevant_queries = unique_queries
+
+        # Filter training and validation data to only use queries in the graph
+        filtered_train_data = [sample for sample in self.train_data if sample['query'] in unique_queries]
+        filtered_val_data = [sample for sample in self.val_data if sample['query'] in unique_queries]
+
+        logger.info(f"Filtered training data: {len(filtered_train_data)} samples (from {len(self.train_data)})")
+        logger.info(f"Filtered validation data: {len(filtered_val_data)} samples (from {len(self.val_data)})")
+
+        # Recalculate warmup steps based on filtered data
+        total_steps = (len(filtered_train_data) // self.config.training.batch_size) * self.config.training.epochs
+        warmup_steps = int(total_steps * self.config.training.warmup_ratio)
+        self.scheduler = torch.optim.lr_scheduler.LinearLR(
+            self.optimizer,
+            start_factor=0.1,
+            total_iters=warmup_steps
+        )
 
         best_val_ndcg = 0.0
         global_step = 0
@@ -92,10 +116,10 @@ class QGTrainer:
             epoch_contrastive = 0.0
             epoch_rank = 0.0
 
-            random.shuffle(self.train_data)
+            random.shuffle(filtered_train_data)
 
-            for step in range(0, len(self.train_data), self.config.training.batch_size):
-                batch = self.train_data[step:step + self.config.training.batch_size]
+            for step in range(0, len(filtered_train_data), self.config.training.batch_size):
+                batch = filtered_train_data[step:step + self.config.training.batch_size]
 
                 queries = [s['query'] for s in batch]
                 documents = [s['document'] for s in batch]
@@ -151,7 +175,7 @@ class QGTrainer:
                     )
 
                 if global_step % self.config.training.eval_steps == 0:
-                    val_metrics = self.evaluate(self.val_data, query_to_idx)
+                    val_metrics = self.evaluate(filtered_val_data, query_to_idx)
                     logger.info(f"Validation | NDCG@10: {val_metrics['ndcg@10']:.4f} | MRR@10: {val_metrics['mrr@10']:.4f}")
 
                     if val_metrics['ndcg@10'] > best_val_ndcg:
@@ -160,10 +184,11 @@ class QGTrainer:
 
                     self.model.train()
 
-            avg_epoch_loss = epoch_loss / (len(self.train_data) // self.config.training.batch_size)
+            avg_epoch_loss = epoch_loss / (len(filtered_train_data) // self.config.training.batch_size)
             logger.info(f"Epoch {epoch + 1} completed | Avg Loss: {avg_epoch_loss:.4f}")
 
         logger.info(f"Training completed | Best NDCG@10: {best_val_ndcg:.4f}")
+        logger.info(f"Used {len(unique_queries)} queries for graph construction out of {len(set([sample['query'] for sample in self.train_data]))} total unique queries")
 
     def evaluate(self, data, query_to_idx):
         """Evaluate model on validation data."""
@@ -234,7 +259,7 @@ class QGTrainer:
 def main():
     parser = argparse.ArgumentParser(description='Train Query Graph Neural Reranker')
     add_config_args(parser)
-    parser.add_argument('--model-name', type=str, help='Model save name')
+    parser.add_argument('--experiment-name', type=str, help='Experiment/model save name')
     args = parser.parse_args()
 
     # Load config
@@ -251,7 +276,13 @@ def main():
 
     # Load data
     logger.info(f"Loading dataset: {config.data.dataset}")
-    train_data, val_data, test_data = load_dataset_unified(config)
+    train_data, val_data, test_data = load_dataset_unified(
+        config.data.dataset,
+        config.data.max_samples,
+        config.data.train_split,
+        config.data.val_split,
+        config.data.test_split
+    )
 
     logger.info(f"Train: {len(train_data)} | Val: {len(val_data)} | Test: {len(test_data)}")
 
@@ -292,11 +323,13 @@ def main():
     trainer.train()
 
     # Save model
-    model_name = args.model_name or f"qg_rerank_{config.data.dataset}"
+    experiment_name = args.experiment_name or f"qg_rerank_{config.data.dataset}"
+    output_dir = Path('models') / experiment_name / 'best'
     output_dir = Path('models') / model_name / 'best'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Saving model to {output_dir}")
+    save_config_with_model(config, output_dir.parent)
     torch.save(model.state_dict(), output_dir / 'model.pt')
     save_config_with_model(config, output_dir.parent)
 

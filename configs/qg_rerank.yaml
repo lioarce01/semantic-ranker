@@ -1,5 +1,6 @@
 # Query Graph Neural Reranking Configuration
 # Novel research approach: First GNN-based reranker using query graphs
+# Config based on quantum_base_resonance_5k_2e_optimized (NDCG 0.78 avg)
 
 model:
   model_name: bert-base-uncased
@@ -12,7 +13,7 @@ model:
 training:
   epochs: 3
   batch_size: 16
-  learning_rate: 0.00002  # 2e-5, proven optimal
+  learning_rate: 2.0e-05  # 2e-5, proven optimal from quantum model
   weight_decay: 0.01
   warmup_ratio: 0.1
   max_grad_norm: 1.0
@@ -24,18 +25,18 @@ training:
   fp16: true
 
 data:
-  dataset: superset_comprehensive
-  max_samples: null
+  dataset: superset_comprehensive  # Same as quantum_base_resonance_5k_2e_optimized
+  max_samples: null  # All 5503 samples
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
-  negative_sampling: hard
+  negative_sampling: hard  # Hard negatives crucial for performance
   num_negatives: 2
 
 gnn:
   gnn_mode: true
   embedding_model: all-mpnet-base-v2  # 768-dim semantic embeddings
-  similarity_threshold: 0.7  # Min cosine sim for query edges
+  similarity_threshold: 0.65  # Slightly lower for more edges (was 0.7)
   max_neighbors: 10  # Max neighbors per query node
   gnn_hidden_dim: 256  # GNN first layer
   gnn_output_dim: 128  # GNN second layer (final query embedding)
