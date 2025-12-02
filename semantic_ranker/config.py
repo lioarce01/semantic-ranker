@@ -73,12 +73,28 @@ class EvaluationConfig:
 
 
 @dataclass
+class GNNConfig:
+    """Query Graph Neural Network configuration"""
+    gnn_mode: bool = False
+    embedding_model: str = "all-mpnet-base-v2"
+    similarity_threshold: float = 0.7
+    max_neighbors: int = 10
+    gnn_hidden_dim: int = 256
+    gnn_output_dim: int = 128
+    gnn_dropout: float = 0.1
+    lambda_contrastive: float = 0.1
+    lambda_rank: float = 0.05
+    temperature: float = 0.07
+
+
+@dataclass
 class Config:
     """Complete configuration for semantic reranker"""
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     data: DataConfig = field(default_factory=DataConfig)
     quantum: QuantumConfig = field(default_factory=QuantumConfig)
+    gnn: GNNConfig = field(default_factory=GNNConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
     @classmethod
@@ -110,6 +126,7 @@ class Config:
             training=TrainingConfig(**config_dict.get('training', {})),
             data=DataConfig(**config_dict.get('data', {})),
             quantum=QuantumConfig(**config_dict.get('quantum', {})),
+            gnn=GNNConfig(**config_dict.get('gnn', {})),
             evaluation=EvaluationConfig(**config_dict.get('evaluation', {}))
         )
 
