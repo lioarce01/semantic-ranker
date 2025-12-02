@@ -6,26 +6,35 @@ Uses existing model and enhances it with quantum principles for better
 ranking performance on difficult examples.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
 import random
+from pathlib import Path
 import torch
 import numpy as np
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    find_best_model,
+    detect_lora_config,
+    get_available_datasets,
+    load_dataset_unified,
+    convert_to_training_samples,
+    add_config_args,
+    load_config_with_overrides,
+    save_config_with_model
+)
 
-import logging
-from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
 from semantic_ranker.training import CrossEncoderTrainer
 from semantic_ranker.models import CrossEncoderModel
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class QuantumResonanceRetainer:

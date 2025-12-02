@@ -1,0 +1,54 @@
+# Retraining configuration - for fine-tuning existing models on new data
+# Based on transfer learning best practices
+
+model:
+  model_name: bert-base-uncased  # Will be loaded from existing model
+  max_length: 256
+  use_lora: false  # Will be auto-detected from model
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+training:
+  epochs: 2  # Fewer epochs for retraining (prevent catastrophic forgetting)
+  batch_size: 16  # Standard batch size
+  learning_rate: 0.00001  # 1e-5, LOWER than training to preserve knowledge
+  weight_decay: 0.01  # Standard regularization
+  warmup_ratio: 0.05  # Less warmup for retraining
+  max_grad_norm: 1.0
+  loss_function: bce
+  eval_steps: 50
+  logging_steps: 25
+  save_strategy: best
+  gradient_accumulation_steps: 2  # Effective batch size = 32
+  fp16: true
+
+data:
+  dataset: qa_mixed_giant  # Smaller dataset for gentle retraining adaptation
+  max_samples: 2000  # Limited samples for adaptation (not full retraining)
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: random  # Random for gentle adaptation
+  num_negatives: 1
+
+quantum:
+  quantum_mode: false  # Set to true for quantum resonance fine-tuning (--quantum-mode)
+  resonance_threshold: 0.35  # Lower threshold for retraining (more connections)
+  entanglement_weight: 0.2  # Lower weight (less aggressive)
+  quantum_phase: superposition
+  knowledge_preservation_weight: 0.7  # HIGHER preservation during retraining
+
+# Retraining Philosophy:
+# - Lower LR (1e-5): Preserve existing knowledge
+# - Fewer epochs (2): Minimal adaptation, avoid forgetting
+# - Smaller dataset: Adapt to new domain without overwriting
+# - Higher preservation (0.7): Maintain base model capabilities
+
+evaluation:
+  metrics:
+    - ndcg@10
+    - mrr@10
+    - map@10
+  batch_size: 32
+  num_samples: 100

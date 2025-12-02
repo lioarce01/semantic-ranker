@@ -4,54 +4,28 @@ Evaluate a trained model (best model only).
 Responsibility: Only evaluation, finds best model automatically.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
+from pathlib import Path
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    find_best_model,
+    get_available_datasets,
+    add_config_args,
+    load_config_with_overrides
+)
 
-import logging
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
 from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
 from semantic_ranker.evaluation import RankerEvaluator
-from semantic_ranker.models import CrossEncoderModel
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def find_best_model():
-    """Find the best model in the models directory."""
-    models_dir = Path("./models")
-
-    if not models_dir.exists():
-        logger.error("❌ No models directory found. Train a model first.")
-        return None
-
-    best_models = []
-    for model_dir in models_dir.iterdir():
-        if model_dir.is_dir():
-            best_path = model_dir / "best"
-            # Check for both regular models and LoRA models
-            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
-            if best_path.exists() and has_model:
-                # Get modification time to find the most recent
-                mtime = best_path.stat().st_mtime
-                best_models.append((str(best_path), mtime, model_dir.name))
-
-    if not best_models:
-        logger.error("❌ No trained models found. Train a model first.")
-        return None
-
-    # Return the most recently trained model
-    best_models.sort(key=lambda x: x[1], reverse=True)
-    best_path, _, model_name = best_models[0]
-
-    logger.info(f"📍 Found best model: {model_name}")
-    return best_path
 
 
 def prepare_eval_data(dataset_name, num_samples=100):
@@ -104,16 +78,26 @@ def prepare_eval_data(dataset_name, num_samples=100):
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate a trained model')
+
+    # Add config support
+    parser = add_config_args(parser)
+
+    # Add evaluation-specific arguments
     parser.add_argument('--model-path', help='Path to specific model directory (if not provided, uses best model)')
-    parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
+    parser.add_argument('--dataset', choices=get_available_datasets(),
                        default='msmarco', help='Dataset to use for evaluation')
     parser.add_argument('--samples', type=int, default=100,
                        help='Number of samples to evaluate')
     parser.add_argument('--metrics', nargs='+',
                        default=['ndcg@5', 'ndcg@10', 'mrr@10', 'map@10'],
                        help='Metrics to compute')
+    parser.add_argument('--eval-batch-size', type=int, help='Override evaluation batch size')
+    parser.add_argument('--num-samples', type=int, help='Override number of samples')
 
     args = parser.parse_args()
+
+    # Load configuration with CLI overrides
+    config = load_config_with_overrides(args)
 
     logger.info("=== Model Evaluation ===")
     print()
@@ -135,16 +119,19 @@ def main():
     evaluator = RankerEvaluator(model_path=model_path)
 
     # 3. Prepare evaluation data
+    num_samples = args.num_samples or args.samples
     logger.info(f"Preparing evaluation data from {args.dataset}...")
-    eval_data = prepare_eval_data(args.dataset, args.samples)
+    eval_data = prepare_eval_data(args.dataset, num_samples)
     logger.info(f"Prepared {len(eval_data)} evaluation queries")
 
-    # 4. Evaluate
+    # 4. Evaluate (using optimized batch evaluation)
     logger.info("Running evaluation...")
+    batch_size = args.eval_batch_size or config.evaluation.batch_size
     metrics = evaluator.evaluate(
         eval_data,
         metrics=args.metrics,
-        batch_size=32
+        batch_size=batch_size,
+        query_batch_size=8  # Use optimized batch processing
     )
 
     # 5. Results

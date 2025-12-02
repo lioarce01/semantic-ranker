@@ -4,75 +4,79 @@ Train a cross-encoder reranker model.
 Responsibility: Only training, no evaluation.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
-
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
-
-import logging
 import random
-from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader, DataPreprocessor
-from semantic_ranker.training import CrossEncoderTrainer
+from pathlib import Path
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    get_available_datasets,
+    load_dataset_unified,
+    add_config_args,
+    load_config_with_overrides,
+    save_config_with_model
+)
+
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
+from semantic_ranker.data import DataPreprocessor
+from semantic_ranker.training import CrossEncoderTrainer
 
 
 def main():
     parser = argparse.ArgumentParser(description='Train a cross-encoder reranker model')
-    parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
-                       default='msmarco', help='Dataset to use for training')
-    parser.add_argument('--model-name', default='distilbert-base-uncased',
-                       help='Pretrained model name')
+
+    # Add config support
+    parser = add_config_args(parser)
+
+    # Add training-specific arguments (can override config)
+    parser.add_argument('--dataset', choices=get_available_datasets(),
+                       help='Dataset to use for training')
+    parser.add_argument('--model-name', help='Pretrained model name')
     parser.add_argument('--output-dir', default='./models/trained_model',
                        help='Output directory for trained model')
-    parser.add_argument('--epochs', type=int, default=3,
-                       help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=16,
-                       help='Training batch size')
-    parser.add_argument('--learning-rate', type=float, default=2e-5,
-                       help='Learning rate')
-    parser.add_argument('--max-samples', type=int, default=1000,
-                       help='Maximum samples to load (for quick training)')
-    parser.add_argument('--use-lora', action='store_true',
-                       help='Use LoRA for efficient training')
+    parser.add_argument('--epochs', type=int, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, help='Training batch size')
+    parser.add_argument('--learning-rate', type=float, help='Learning rate')
+    parser.add_argument('--max-samples', type=int, help='Maximum samples to load')
+    parser.add_argument('--use-lora', action='store_true', help='Use LoRA for efficient training')
 
     args = parser.parse_args()
 
+    # Load configuration with CLI overrides
+    config = load_config_with_overrides(args)
+
+    # Use config values
+    dataset = args.dataset or config.data.dataset
+    model_name = args.model_name or config.model.model_name
+    epochs = args.epochs or config.training.epochs
+    batch_size = args.batch_size or config.training.batch_size
+    learning_rate = args.learning_rate or config.training.learning_rate
+    max_samples = args.max_samples or config.data.max_samples
+    use_lora = args.use_lora or config.model.use_lora
+
     logger.info("=== Cross-Encoder Training ===")
-    logger.info(f"Dataset: {args.dataset}")
-    logger.info(f"Model: {args.model_name}")
+    logger.info(f"Dataset: {dataset}")
+    logger.info(f"Model: {model_name}")
     logger.info(f"Output: {args.output_dir}")
-    logger.info(f"Epochs: {args.epochs}")
-    logger.info(f"LoRA: {args.use_lora}")
+    logger.info(f"Epochs: {epochs}")
+    logger.info(f"LoRA: {use_lora}")
     print()
 
-    # 1. Load data
+    # 1. Load data using shared utility
     logger.info("Loading data...")
-    if args.dataset == 'msmarco':
-        loader = MSMARCODataLoader()
-        train_data, val_data, test_data = loader.load_and_split(
-            max_samples=args.max_samples
-        )
-        # Use validation data for training validation
-        combined_train = train_data + val_data[:len(val_data)//2]
-        val_data = val_data[len(val_data)//2:]
-    else:
-        loader = CustomDataLoader()
-        dataset_path = f"datasets/{args.dataset}.json"
-        all_data = loader.load_from_json(dataset_path)
+    train_data, val_data, test_data = load_dataset_unified(dataset, max_samples)
 
-        # Split for training
-        random.seed(42)
-        random.shuffle(all_data)
-        split_idx = int(len(all_data) * 0.8)
-        combined_train = all_data[:split_idx]
-        val_data = all_data[split_idx:]
+    # Use validation data for training validation
+    combined_train = train_data + val_data[:len(val_data)//2]
+    val_data = val_data[len(val_data)//2:]
 
     logger.info(f"Training samples: {len(combined_train)}")
     logger.info(f"Validation samples: {len(val_data)}")
@@ -80,20 +84,20 @@ def main():
     # 2. Preprocess
     logger.info("\nPreprocessing data...")
     preprocessor = DataPreprocessor(
-        tokenizer_name=args.model_name,
-        max_length=256
+        tokenizer_name=model_name,
+        max_length=config.model.max_length
     )
 
     train_triples = preprocessor.create_triples(
         combined_train,
-        negative_sampling="random",
-        num_negatives=1
+        negative_sampling=config.data.negative_sampling,
+        num_negatives=config.data.num_negatives
     )
 
     val_triples = preprocessor.create_triples(
         val_data,
-        negative_sampling="random",
-        num_negatives=1
+        negative_sampling=config.data.negative_sampling,
+        num_negatives=config.data.num_negatives
     )
 
     logger.info(f"Created {len(train_triples)} training triples")
@@ -101,31 +105,37 @@ def main():
     # 3. Train
     logger.info("\nInitializing trainer...")
     trainer = CrossEncoderTrainer(
-        model_name=args.model_name,
+        model_name=model_name,
         num_labels=1,
-        max_length=256,
-        loss_function="bce",
-        use_lora=args.use_lora
+        max_length=config.model.max_length,
+        loss_function=config.training.loss_function,
+        use_lora=use_lora
     )
 
     logger.info("\nStarting training...")
     history = trainer.train(
         train_samples=train_triples,
         val_samples=val_triples,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
         output_dir=args.output_dir,
         save_best_model=True,
-        eval_steps=100,
-        logging_steps=50
+        eval_steps=config.training.eval_steps,
+        logging_steps=config.training.logging_steps
     )
+
+    # Save configuration with model for reproducibility
+    save_config_with_model(config, args.output_dir)
 
     logger.info("\n✅ Training completed!")
     logger.info(f"📁 Model saved to: {args.output_dir}")
-    logger.info(".4f")
-    if history['val_loss']:
-        logger.info(".4f")
+    logger.info(f"⚙️ Configuration saved alongside model")
+
+    if history.get('train_loss'):
+        logger.info(f"Final train loss: {history['train_loss'][-1]:.4f}")
+    if history.get('val_loss'):
+        logger.info(f"Final val loss: {history['val_loss'][-1]:.4f}")
 
     logger.info("\n💡 Next steps:")
     logger.info("• Run evaluation: python cli/eval.py")

@@ -1,0 +1,46 @@
+# Quick test configuration - for rapid iteration and debugging
+# Minimal resources, fast feedback
+
+model:
+  model_name: bert-base-uncased
+  max_length: 128  # Shorter for speed
+  use_lora: true  # LoRA for faster training
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+training:
+  epochs: 1  # Single epoch for quick validation
+  batch_size: 16  # Standard batch
+  learning_rate: 0.00002  # 2e-5, standard
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  loss_function: bce
+  eval_steps: 25  # Frequent evaluation for monitoring
+  logging_steps: 10  # Very frequent logging
+  save_strategy: best
+  gradient_accumulation_steps: 1  # No accumulation for speed
+  fp16: true
+
+data:
+  dataset: qa_mixed_giant  # Smaller dataset for quick testing
+  max_samples: 100  # Minimal samples for quick test
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: random  # Random for speed
+  num_negatives: 1
+
+quantum:
+  quantum_mode: false
+  resonance_threshold: 0.35
+  entanglement_weight: 0.3
+  quantum_phase: superposition
+  knowledge_preservation_weight: 0.5
+
+evaluation:
+  metrics:
+    - ndcg@10
+  batch_size: 32
+  num_samples: 50  # Quick evaluation

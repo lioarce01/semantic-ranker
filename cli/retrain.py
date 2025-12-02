@@ -4,76 +4,71 @@ Retrain the best model with additional data.
 Responsibility: Only retraining, finds best model automatically.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
+from pathlib import Path
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    find_best_model,
+    detect_lora_config,
+    get_available_datasets,
+    load_dataset_unified,
+    convert_to_training_samples,
+    add_config_args,
+    load_config_with_overrides,
+    save_config_with_model
+)
 
-import logging
-import random
-from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
+from semantic_ranker.data import DataPreprocessor
 from semantic_ranker.training import CrossEncoderTrainer
 from semantic_ranker.models import CrossEncoderModel
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def find_best_model():
-    """Find the best model in the models directory."""
-    models_dir = Path("./models")
-
-    if not models_dir.exists():
-        logger.error("❌ No models directory found. Train a model first.")
-        return None
-
-    best_models = []
-    for model_dir in models_dir.iterdir():
-        if model_dir.is_dir():
-            best_path = model_dir / "best"
-            # Check for both regular models and LoRA models
-            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
-            if best_path.exists() and has_model:
-                mtime = best_path.stat().st_mtime
-                best_models.append((str(best_path), mtime, model_dir.name))
-
-    if not best_models:
-        logger.error("❌ No trained models found. Train a model first.")
-        return None
-
-    best_models.sort(key=lambda x: x[1], reverse=True)
-    best_path, _, model_name = best_models[0]
-
-    logger.info(f"📍 Found best model: {model_name}")
-    return best_path
 
 
 def main():
     parser = argparse.ArgumentParser(description='Retrain the best model with additional data')
-    parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
-                       default='msmarco', help='Additional dataset for retraining')
-    parser.add_argument('--epochs', type=int, default=2,
-                       help='Number of additional epochs')
-    parser.add_argument('--batch-size', type=int, default=8,
-                       help='Batch size for retraining')
-    parser.add_argument('--learning-rate', type=float, default=1e-5,
-                       help='Learning rate for fine-tuning (lower than initial)')
-    parser.add_argument('--samples', type=int, default=500,
-                       help='Number of additional samples to use')
+
+    # Add config support
+    parser = add_config_args(parser)
+
+    # Add retraining-specific arguments
+    parser.add_argument('--dataset', choices=get_available_datasets(),
+                       help='Additional dataset for retraining')
+    parser.add_argument('--epochs', type=int, help='Number of additional epochs')
+    parser.add_argument('--batch-size', type=int, help='Batch size for retraining')
+    parser.add_argument('--learning-rate', type=float, help='Learning rate for fine-tuning')
+    parser.add_argument('--samples', type=int, help='Number of additional samples to use')
     parser.add_argument('--suffix', default='_retrained',
                        help='Suffix for retrained model directory')
+    parser.add_argument('--quantum-mode', action='store_true',
+                       help='Enable quantum resonance fine-tuning')
 
     args = parser.parse_args()
 
+    # Load configuration (use 'retrain' profile defaults)
+    config = load_config_with_overrides(args)
+
+    # Use config values with retrain defaults
+    dataset = args.dataset or config.data.dataset
+    epochs = args.epochs or 2  # Default 2 epochs for retraining
+    batch_size = args.batch_size or 8  # Smaller batch for retraining
+    learning_rate = args.learning_rate or 1e-5  # Lower LR for retraining
+    samples = args.samples or 500
+    quantum_mode = args.quantum_mode or config.quantum.quantum_mode
+
     logger.info("=== Model Retraining ===")
-    logger.info(f"Additional dataset: {args.dataset}")
-    logger.info(f"Additional epochs: {args.epochs}")
-    logger.info(f"Learning rate: {args.learning_rate}")
+    logger.info(f"Additional dataset: {dataset}")
+    logger.info(f"Additional epochs: {epochs}")
+    logger.info(f"Learning rate: {learning_rate}")
+    logger.info(f"Quantum mode: {quantum_mode}")
     print()
 
     # 1. Find and load best model
@@ -89,49 +84,17 @@ def main():
         logger.error(f"❌ Failed to load model from {model_path}: {e}")
         return
 
-    # 2. Load additional data
-    logger.info(f"Loading additional data from {args.dataset}...")
-    if args.dataset == 'msmarco':
-        loader = MSMARCODataLoader()
-        # Load more data to have both training and validation
-        total_samples = min(args.samples + 200, 5000)  # Add 200 for validation
-        additional_data, val_data, _ = loader.load_and_split(max_samples=total_samples)
-        # Use a portion for validation if we have enough data
-        if len(val_data) < 50 and len(additional_data) > 100:
-            # Split additional data for validation
-            val_split = min(50, len(additional_data) // 4)
-            val_data = additional_data[-val_split:]
-            additional_data = additional_data[:-val_split]
-    else:
-        loader = CustomDataLoader()
-        dataset_path = f"datasets/{args.dataset}.json"
-        all_data = loader.load_from_json(dataset_path)
-        additional_data = all_data[:args.samples]
-        val_data = []  # No validation data for custom datasets
+    # 2. Load additional data using shared utility
+    logger.info(f"Loading additional data from {dataset}...")
+    train_data, val_data, _ = load_dataset_unified(dataset, samples + 200)  # Extra for validation
 
-    logger.info(f"✅ Loaded {len(additional_data)} additional samples")
-    if val_data:
-        logger.info(f"✅ Loaded {len(val_data)} validation samples")
-    else:
-        logger.info("ℹ️ No validation data available for retraining")
+    logger.info(f"✅ Loaded {len(train_data)} additional training samples")
+    logger.info(f"✅ Loaded {len(val_data)} validation samples")
 
-    # 3. Preprocess additional data
-    logger.info("Preparing additional data for retraining...")
-
-    # Convert data to training format (query, document, label)
-    # For cross-encoder training, we need individual (query, document, label) pairs
-    training_samples = []
-
-    for item in additional_data:
-        query = item['query']
-        documents = item['documents']
-        labels = item['labels']
-
-        # Create individual training samples
-        for doc, label in zip(documents, labels):
-            training_samples.append((query, doc, float(label)))
-
-    logger.info(f"✅ Created {len(training_samples)} additional training samples")
+    # 3. Convert to training format using shared utility
+    logger.info("Preparing data for retraining...")
+    training_samples = convert_to_training_samples(train_data)
+    logger.info(f"✅ Created {len(training_samples)} training triples")
 
     # Validate we have enough training data
     if len(training_samples) < 10:
@@ -141,32 +104,8 @@ def main():
     # 4. Setup retraining
     logger.info("Setting up retraining...")
 
-    # Detect LoRA configuration from loaded model
-    # Check if model has LoRA config saved
-    use_lora = False
-    lora_r = 8
-    lora_alpha = 16
-
-    config_path = Path(model_path) / "model_config.json"
-    if config_path.exists():
-        try:
-            import json
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            lora_config = config.get('lora_config', {})
-            use_lora = lora_config.get('use_lora', False)
-            lora_r = lora_config.get('lora_r', 8)
-            lora_alpha = lora_config.get('lora_alpha', 16)
-        except Exception as e:
-            logger.warning(f"Could not read LoRA config: {e}")
-
-    # Fallback: check model attributes
-    if not use_lora and hasattr(model, 'use_lora'):
-        use_lora = model.use_lora
-
-    if use_lora:
-        logger.info("📍 Detected LoRA configuration in loaded model")
-        logger.info(f"   LoRA rank: {lora_r}, alpha: {lora_alpha}")
+    # Detect LoRA configuration using shared utility
+    use_lora, lora_r, lora_alpha, lora_dropout = detect_lora_config(model_path)
 
     trainer = CrossEncoderTrainer(
         model_name=model.model_name,

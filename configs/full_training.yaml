@@ -1,0 +1,53 @@
+# Full training configuration - for production model training
+# Based on MS MARCO state-of-the-art practices
+
+model:
+  model_name: bert-base-uncased
+  max_length: 256  # Sufficient for MS MARCO passages
+  use_lora: false
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+training:
+  epochs: 3  # CRITICAL: MS MARCO SOTA uses 2-3 epochs max
+  batch_size: 16  # Balance between gradient quality and memory
+  learning_rate: 0.00002  # 2e-5, standard for BERT
+  weight_decay: 0.01  # Standard regularization
+  warmup_ratio: 0.1  # 10% warmup
+  max_grad_norm: 1.0  # Standard clipping
+  loss_function: bce
+  eval_steps: 200  # Less frequent eval for speed
+  logging_steps: 100
+  save_strategy: best
+  gradient_accumulation_steps: 4  # Effective batch size = 64
+  fp16: true  # Always use mixed precision
+
+data:
+  dataset: superset_comprehensive  # Best dataset: 5503 samples, high diversity
+  max_samples: null  # Use all available data
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: hard  # Essential for production quality
+  num_negatives: 3  # More negatives for challenging training
+
+quantum:
+  quantum_mode: false
+  resonance_threshold: 0.35
+  entanglement_weight: 0.3
+  quantum_phase: superposition
+  knowledge_preservation_weight: 0.5
+
+evaluation:
+  metrics:
+    - ndcg@10
+    - ndcg@20
+    - mrr@10
+    - mrr@20
+    - map@10
+    - map@20
+    - hit_rate@10
+    - precision@10
+  batch_size: 32
+  num_samples: null  # Evaluate on full test set

@@ -6,25 +6,33 @@ Quantum Resonance FT treats query-document relationships as quantum states
 that exist in superposition until collapsing into optimal rankings.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
 import random
+import sys
+from pathlib import Path
 import torch
 import numpy as np
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    get_available_datasets,
+    load_dataset_unified,
+    add_config_args,
+    load_config_with_overrides,
+    save_config_with_model
+)
 
-import logging
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
 from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader, DataPreprocessor
 from semantic_ranker.training import CrossEncoderTrainer
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class QuantumResonanceTrainer:
@@ -37,10 +45,12 @@ class QuantumResonanceTrainer:
     - Resonance frequencies guide the learning process
     """
 
-    def __init__(self, base_trainer, resonance_threshold=0.7, entanglement_weight=0.3):
+    def __init__(self, base_trainer, resonance_threshold=0.35, entanglement_weight=0.3,
+                 knowledge_preservation_weight=0.6):
         self.base_trainer = base_trainer
         self.resonance_threshold = resonance_threshold
         self.entanglement_weight = entanglement_weight
+        self.knowledge_preservation_weight = knowledge_preservation_weight
         self.resonance_frequencies = {}
         self.entanglement_graph = {}
 
@@ -72,7 +82,7 @@ class QuantumResonanceTrainer:
                 other_query = other_sample['query']
                 if other_query != query:
                     resonance = self.compute_resonance_frequency(query, other_query)
-                    if resonance > 0.3:  # Entanglement threshold
+                    if resonance > self.resonance_threshold:  # Use configured threshold
                         if other_query not in self.entanglement_graph[query]:
                             self.entanglement_graph[query].append(other_query)
 
@@ -161,86 +171,98 @@ class QuantumResonanceTrainer:
 
 def main():
     parser = argparse.ArgumentParser(description='Train with Quantum Resonance Fine-Tuning')
-    parser.add_argument('--dataset', choices=['msmarco'] + [f.stem for f in Path('datasets').glob('*.json')],
-                       default='msmarco', help='Dataset to use for training')
-    parser.add_argument('--model-name', default='bert-base-uncased',
-                       help='Pretrained model name')
-    parser.add_argument('--output-dir', default='./models/quantum_trained_model',
-                       help='Output directory for trained model')
-    parser.add_argument('--epochs', type=int, default=3,
-                       help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=16,
-                       help='Training batch size')
-    parser.add_argument('--learning-rate', type=float, default=2e-5,
-                       help='Learning rate')
-    parser.add_argument('--max-samples', type=int, default=1000,
-                       help='Maximum samples to load (for quick training)')
-    parser.add_argument('--use-lora', action='store_true',
-                       help='Use LoRA for efficient training')
 
-    # Quantum-specific arguments
-    parser.add_argument('--quantum-mode', choices=['resonance', 'entanglement', 'superposition'],
-                       default='resonance', help='Quantum fine-tuning mode')
-    parser.add_argument('--resonance-threshold', type=float, default=0.7,
-                       help='Resonance threshold for quantum collapse (0.0-1.0)')
-    parser.add_argument('--entanglement-weight', type=float, default=0.3,
-                       help='Weight for entanglement coherence loss (0.0-1.0)')
-    parser.add_argument('--quantum-phase', choices=['superposition', 'collapse', 'resonance'],
-                       default='resonance', help='Quantum training phase')
+    # Config support (loads everything from YAML)
+    parser = add_config_args(parser)
+
+    # Only essential CLI arguments (things not in config or commonly overridden)
+    parser.add_argument('--output', '--output-dir', dest='output_dir',
+                       help='Output directory for trained model (required)')
+
+    # Optional: Common overrides for experimentation
+    parser.add_argument('--epochs', type=int, help='Override epochs from config')
+    parser.add_argument('--learning-rate', type=float, help='Override learning rate from config')
 
     args = parser.parse_args()
 
+    # Load config (everything comes from YAML now!)
+    config = load_config_with_overrides(args)
+
+    # Extract all values from config (no more redundant parser arguments!)
+    dataset = config.data.dataset
+    model_name = config.model.model_name
+    epochs = args.epochs or config.training.epochs  # Allow CLI override
+    batch_size = config.training.batch_size
+    learning_rate = args.learning_rate or config.training.learning_rate  # Allow CLI override
+    max_samples = config.data.max_samples
+    use_lora = config.model.use_lora
+
+    # Output dir (only thing that must come from CLI or has default)
+    output_dir = args.output_dir or './models/quantum_trained_model'
+
+    # Quantum config (all from YAML)
+    quantum_mode = config.quantum.quantum_mode if isinstance(config.quantum.quantum_mode, str) else ('resonance' if config.quantum.quantum_mode else 'superposition')
+    resonance_threshold = config.quantum.resonance_threshold
+    entanglement_weight = config.quantum.entanglement_weight
+    quantum_phase = config.quantum.quantum_phase
+    knowledge_preservation_weight = config.quantum.knowledge_preservation_weight
+
     logger.info("🧬 === QUANTUM RESONANCE FINE-TUNING ===")
     logger.info("🌊 Treating query-document relationships as quantum states")
-    logger.info(f"Dataset: {args.dataset}")
-    logger.info(f"Model: {args.model_name}")
-    logger.info(f"Quantum Mode: {args.quantum_mode}")
-    logger.info(f"Resonance Threshold: {args.resonance_threshold}")
-    logger.info(f"Entanglement Weight: {args.entanglement_weight}")
-    logger.info(f"Output: {args.output_dir}")
+    logger.info(f"Dataset: {dataset}")
+    logger.info(f"Model: {model_name}")
+    logger.info(f"Quantum Mode: {quantum_mode}")
+    logger.info(f"Quantum Phase: {quantum_phase}")
+    logger.info(f"Resonance Threshold: {resonance_threshold}")
+    logger.info(f"Entanglement Weight: {entanglement_weight}")
+    logger.info(f"Knowledge Preservation: {knowledge_preservation_weight}")
+    logger.info(f"Output: {output_dir}")
 
     try:
         # 1. Load and validate data
-        logger.info(f"\n📊 Step 1: Loading data ({args.max_samples} samples)...")
+        logger.info(f"\n📊 Step 1: Loading data ({max_samples} samples)...")
 
-        if args.dataset == 'msmarco':
+        if dataset == 'msmarco':
             loader = MSMARCODataLoader()
-            train_data, val_data, _ = loader.load_and_split(max_samples=args.max_samples)
+            train_data, val_data, _ = loader.load_and_split(max_samples=max_samples)
         else:
             # Load custom dataset
             custom_loader = CustomDataLoader()
-            train_data = custom_loader.load_from_json(f"datasets/{args.dataset}.json", max_samples=args.max_samples)
+            train_data = custom_loader.load_from_json(f"datasets/{dataset}.json", max_samples=max_samples)
             val_data = []  # No validation for custom datasets in quantum mode
 
         logger.info(f"✅ Loaded {len(train_data)} training samples")
 
         # 2. Initialize quantum resonance trainer
         logger.info("\n🧬 Step 2: Initializing Quantum Resonance Trainer...")
-        logger.info(f"   Mode: {args.quantum_mode}")
-        logger.info(f"   Phase: {args.quantum_phase}")
-        logger.info(f"   Resonance Threshold: {args.resonance_threshold:.1f}")
-        logger.info(f"   Entanglement Weight: {args.entanglement_weight:.1f}")
-        # Create base trainer
+        logger.info(f"   Mode: {quantum_mode}")
+        logger.info(f"   Phase: {quantum_phase}")
+        logger.info(f"   Resonance Threshold: {resonance_threshold:.1f}")
+        logger.info(f"   Entanglement Weight: {entanglement_weight:.1f}")
+        # Create base trainer (use config values, not hardcoded)
+        # Note: lora_dropout is handled by CrossEncoderModel, not trainer
         trainer = CrossEncoderTrainer(
-            model_name=args.model_name,
+            model_name=model_name,
             num_labels=1,
-            loss_function="bce",
-            use_lora=args.use_lora,
-            lora_r=8,
-            lora_alpha=16
+            max_length=config.model.max_length,
+            loss_function=config.training.loss_function,
+            use_lora=use_lora,
+            lora_r=config.model.lora_r,
+            lora_alpha=config.model.lora_alpha
         )
 
         # Wrap with quantum resonance
         quantum_trainer = QuantumResonanceTrainer(
             base_trainer=trainer,
-            resonance_threshold=args.resonance_threshold,
-            entanglement_weight=args.entanglement_weight
+            resonance_threshold=resonance_threshold,
+            entanglement_weight=entanglement_weight,
+            knowledge_preservation_weight=knowledge_preservation_weight
         )
 
         # 3. Quantum data preparation
-        logger.info(f"\n🌊 Step 3: Quantum {args.quantum_phase} phase...")
+        logger.info(f"\n🌊 Step 3: Quantum {quantum_phase} phase...")
 
-        if args.quantum_phase == 'superposition':
+        if quantum_phase == 'superposition':
             # Keep data in superposition (standard preprocessing)
             logger.info("   Maintaining superposition state...")
             quantum_train_data = train_data
@@ -251,7 +273,7 @@ def main():
 
         # 4. Prepare data for training
         logger.info("\n📊 Step 4: Preparing training data...")
-        preprocessor = DataPreprocessor(tokenizer_name=args.model_name)
+        preprocessor = DataPreprocessor(tokenizer_name=model_name)
 
         # Convert to training format
         if hasattr(quantum_train_data[0], 'documents'):
@@ -271,19 +293,33 @@ def main():
         logger.info(f"✅ Created {len(train_triples)} training triples")
 
         # 5. Quantum training
-        logger.info(f"\n🚀 Step 5: Quantum training for {args.epochs} epochs...")
-        logger.info(f"   Learning rate: {args.learning_rate}")
-        logger.info(f"   Batch size: {args.batch_size}")
-        logger.info(f"   LoRA enabled: {args.use_lora}")
+        logger.info(f"\n🚀 Step 5: Quantum training for {epochs} epochs...")
+        logger.info(f"   Learning rate: {learning_rate}")
+        logger.info(f"   Batch size: {batch_size}")
+        logger.info(f"   LoRA enabled: {use_lora}")
 
         # Custom training loop with quantum loss
-        optimizer = torch.optim.AdamW(trainer.model.model.parameters(), lr=args.learning_rate)
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=100)
+        optimizer = torch.optim.AdamW(
+            trainer.model.model.parameters(),
+            lr=learning_rate,
+            weight_decay=config.training.weight_decay
+        )
+
+        # Calculate warmup steps based on config
+        total_steps = (len(train_triples) // batch_size) * epochs
+        warmup_steps = int(total_steps * config.training.warmup_ratio)
+
+        from transformers import get_linear_schedule_with_warmup
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
 
         best_loss = float('inf')
 
-        for epoch in range(args.epochs):
-            logger.info(f"\nEpoch {epoch + 1}/{args.epochs}")
+        for epoch in range(epochs):
+            logger.info(f"\nEpoch {epoch + 1}/{epochs}")
             trainer.model.model.train()
 
             epoch_loss = 0.0
@@ -291,7 +327,7 @@ def main():
 
             # Shuffle training data
             random.shuffle(train_triples)
-            batches = [train_triples[i:i + args.batch_size] for i in range(0, len(train_triples), args.batch_size)]
+            batches = [train_triples[i:i + batch_size] for i in range(0, len(train_triples), batch_size)]
 
             for batch_idx, batch in enumerate(batches):
                 queries = [item[0] for item in batch]
@@ -321,6 +357,13 @@ def main():
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
+
+                # Gradient clipping (use config value)
+                torch.nn.utils.clip_grad_norm_(
+                    trainer.model.model.parameters(),
+                    config.training.max_grad_norm
+                )
+
                 optimizer.step()
                 scheduler.step()
 
@@ -334,13 +377,14 @@ def main():
             # Save best model
             if avg_epoch_loss < best_loss:
                 best_loss = avg_epoch_loss
-                trainer.save_model(args.output_dir, save_best=True)
+                trainer.save_model(output_dir, save_best=True)
                 logger.info("💾 Saved best model")
 
         # 6. Final save
-        trainer.save_model(args.output_dir, save_best=False)
+        trainer.save_model(output_dir, save_best=False)
+        save_config_with_model(config, output_dir)
         logger.info("\n🎉 Quantum training completed!")
-        logger.info(f"📁 Model saved to: {args.output_dir}")
+        logger.info(f"📁 Model saved to: {output_dir}")
         logger.info("\n🧬 Quantum resonance patterns learned!")
         logger.info("   - Query-document relationships modeled as quantum states")
         logger.info("   - Resonance frequencies computed for optimal ranking")

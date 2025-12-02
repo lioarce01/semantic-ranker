@@ -6,16 +6,24 @@ This script evaluates a single model on all key benchmark datasets
 for comprehensive performance assessment and comparison.
 """
 
-import sys
-from pathlib import Path
 import argparse
+from pathlib import Path
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    find_best_model,
+    load_dataset_unified
+)
 
-from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
 from semantic_ranker.evaluation import RankerEvaluator
 from semantic_ranker.models import CrossEncoderModel
 

@@ -1,0 +1,56 @@
+# Quantum Fine-Tuning Configuration
+# Optimized based on cross-encoder best practices + quantum reasoning
+
+model:
+  model_name: bert-base-uncased
+  max_length: 256  # Sufficient, reduces memory/time
+  use_lora: true  # LoRA for efficiency
+  lora_r: 8  # Standard rank (NOT 32, prevents overfitting)
+  lora_alpha: 16  # 2:1 ratio with r
+  lora_dropout: 0.1  # Higher dropout for regularization
+
+training:
+  epochs: 3  # CRITICAL: Quantum or not, >3 epochs = overfitting
+  batch_size: 16  # Balance memory and gradient quality
+  learning_rate: 0.00003  # 3e-5, optimized for quantum balance (50% higher than standard)
+  weight_decay: 0.01  # Standard regularization
+  warmup_ratio: 0.1  # Standard 10% warmup
+  max_grad_norm: 1.0  # Standard clipping
+  loss_function: bce
+  eval_steps: 100
+  logging_steps: 50
+  save_strategy: best
+  gradient_accumulation_steps: 4  # Effective batch = 64
+  fp16: true  # Always use mixed precision
+
+data:
+  dataset: superset_comprehensive  # Best dataset: 5503 samples, high diversity
+  max_samples: null
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: hard  # Hard negatives essential for quantum coherence
+  num_negatives: 2  # Balanced difficulty
+
+quantum:
+  quantum_mode: true
+  resonance_threshold: 0.35  # 35% overlap for meaningful connections
+  entanglement_weight: 0.1  # Light influence, let BCE dominate
+  quantum_phase: resonance  # Optimal phase for training
+  knowledge_preservation_weight: 0.3  # Balanced preservation
+
+# Quantum Reasoning (OPTIMIZED FOR PERFORMANCE):
+# - LR 3e-5: Strong enough to overcome quantum noise, faster convergence
+# - Entanglement 0.1: Minimal noise (vs 0.2 which caused plateau at loss 0.75)
+# - Preservation 0.3: Balanced (vs 0.6 which was too conservative)
+# - Result: BCE loss dominates → better ranking metrics
+# - Expected: Loss ~0.30-0.40, NDCG@10 >0.70, MRR@10 >0.60
+
+evaluation:
+  metrics:
+    - ndcg@10
+    - ndcg@20
+    - mrr@10
+    - map@10
+  batch_size: 32
+  num_samples: null

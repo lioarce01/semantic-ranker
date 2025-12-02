@@ -169,15 +169,15 @@ class BiEncoderRetriever:
         if self.corpus_embeddings is None:
             raise ValueError("No index to save")
 
-        import pickle
+        import json
         from pathlib import Path
 
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 
-        # Save corpus
-        with open(save_path / "corpus.pkl", "wb") as f:
-            pickle.dump(self.corpus, f)
+        # Save corpus as JSON (safer than pickle)
+        with open(save_path / "corpus.json", "w", encoding="utf-8") as f:
+            json.dump(self.corpus, f, ensure_ascii=False, indent=2)
 
         # Save embeddings
         torch.save(self.corpus_embeddings, save_path / "embeddings.pt")
@@ -191,19 +191,39 @@ class BiEncoderRetriever:
         Args:
             load_path: Path to load index from
         """
-        import pickle
+        import json
         from pathlib import Path
 
         load_path = Path(load_path)
 
-        # Load corpus
-        with open(load_path / "corpus.pkl", "rb") as f:
-            self.corpus = pickle.load(f)
+        # Load corpus (with backward compatibility for pickle files)
+        json_path = load_path / "corpus.json"
+        pkl_path = load_path / "corpus.pkl"
 
-        # Load embeddings
+        if json_path.exists():
+            # Load from JSON (preferred)
+            with open(json_path, "r", encoding="utf-8") as f:
+                self.corpus = json.load(f)
+        elif pkl_path.exists():
+            # Backward compatibility: load from pickle and migrate to JSON
+            logger.warning("Loading from legacy pickle format. Migrating to JSON...")
+            import pickle
+            with open(pkl_path, "rb") as f:
+                self.corpus = pickle.load(f)
+
+            # Save as JSON and remove pickle file
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(self.corpus, f, ensure_ascii=False, indent=2)
+            pkl_path.unlink()  # Delete old pickle file
+            logger.info("Migration to JSON complete")
+        else:
+            raise FileNotFoundError(f"No corpus file found in {load_path}")
+
+        # Load embeddings (with weights_only=True for security)
         self.corpus_embeddings = torch.load(
             load_path / "embeddings.pt",
-            map_location=self.device
+            map_location=self.device,
+            weights_only=True
         )
 
         logger.info(f"Index loaded from {load_path}")

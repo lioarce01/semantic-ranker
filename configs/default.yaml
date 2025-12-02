@@ -1,0 +1,48 @@
+# Default configuration for semantic reranker training
+# Based on 2024 best practices and empirical research
+
+model:
+  model_name: bert-base-uncased
+  max_length: 256  # Sufficient for MS MARCO, reduces memory
+  use_lora: false
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+training:
+  epochs: 3  # Optimal: cross-encoders overfit quickly beyond 2-3 epochs
+  batch_size: 16  # Standard, increase to 32 if memory allows
+  learning_rate: 0.00002  # 2e-5, most common for BERT fine-tuning
+  weight_decay: 0.01  # Standard regularization
+  warmup_ratio: 0.1  # 10% warmup is standard
+  max_grad_norm: 1.0  # Standard gradient clipping
+  loss_function: bce
+  eval_steps: 100
+  logging_steps: 50
+  save_strategy: best
+  gradient_accumulation_steps: 2  # Effective batch size = 32
+  fp16: true  # Always use mixed precision if GPU supports it
+
+data:
+  dataset: superset_comprehensive  # Best dataset: 5503 samples, high diversity
+  max_samples: null  # Use all samples
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: hard  # Hard negatives significantly improve performance
+  num_negatives: 2  # Balance between difficulty and training stability
+
+quantum:
+  quantum_mode: false
+  resonance_threshold: 0.35  # 35% overlap is realistic for related queries
+  entanglement_weight: 0.3
+  quantum_phase: superposition
+  knowledge_preservation_weight: 0.5
+
+evaluation:
+  metrics:
+    - ndcg@10
+    - mrr@10
+    - map@10
+  batch_size: 32
+  num_samples: null

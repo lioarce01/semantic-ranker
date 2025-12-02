@@ -6,6 +6,8 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import json
+from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
 import torch
 from tqdm import tqdm
@@ -65,72 +67,83 @@ class RankerEvaluator:
         test_data: List[Dict[str, Any]],
         metrics: List[str] = ["ndcg@10", "mrr@10", "map@10"],
         batch_size: int = 32,
+        query_batch_size: int = 8,
         return_per_query: bool = False
     ) -> Dict[str, float]:
         """
-        Evaluate model on test data.
+        Evaluate model on test data with optimized batch processing.
 
         Args:
             test_data: Test dataset
             metrics: List of metrics to compute
-            batch_size: Batch size for inference
+            batch_size: Batch size for model inference
+            query_batch_size: Number of queries to process simultaneously
             return_per_query: Whether to return per-query metrics
 
         Returns:
             Dictionary with evaluation metrics
         """
-        logger.info(f"Evaluating on {len(test_data)} queries")
+        logger.info(f"Evaluating on {len(test_data)} queries (query_batch_size={query_batch_size})")
 
         # Parse metrics
         metric_configs = self._parse_metrics(metrics)
 
-        # Evaluate each query
+        # Evaluate queries in batches
         query_metrics = []
 
-        for item in tqdm(test_data, desc="Evaluating"):
-            query = item.get('query', '')
-            documents = item.get('documents', [])
-            relevance_labels = item.get('labels', [])
+        for batch_start in range(0, len(test_data), query_batch_size):
+            batch_end = min(batch_start + query_batch_size, len(test_data))
+            query_batch = test_data[batch_start:batch_end]
 
-            if not query or not documents:
+            # Prepare all (query, doc) pairs for this batch
+            all_pairs = []
+            batch_metadata = []
+
+            for item in query_batch:
+                query = item.get('query', '')
+                documents = item.get('documents', [])
+                labels = item.get('labels', [])
+
+                if not query or not documents:
+                    continue
+
+                start_idx = len(all_pairs)
+                all_pairs.extend([(query, doc) for doc in documents])
+                batch_metadata.append({
+                    'start_idx': start_idx,
+                    'end_idx': len(all_pairs),
+                    'labels': labels
+                })
+
+            # Skip if no valid queries in batch
+            if not all_pairs:
                 continue
 
-            # Rank documents
-            scores = self.model.predict(
-                [query] * len(documents),
-                documents,
+            # Single batched inference for all (query, doc) pairs
+            queries_list, docs_list = zip(*all_pairs)
+            all_scores = self.model.predict(
+                list(queries_list),
+                list(docs_list),
                 batch_size=batch_size
             )
 
-            # Sort by score
-            ranked_indices = sorted(
-                range(len(scores)),
-                key=lambda i: scores[i],
-                reverse=True
-            )
+            # Compute metrics for each query in parallel
+            with ThreadPoolExecutor(max_workers=query_batch_size) as executor:
+                futures = []
+                for meta in batch_metadata:
+                    scores = all_scores[meta['start_idx']:meta['end_idx']]
+                    labels = meta['labels']
 
-            # Reorder relevance labels by ranking
-            ranked_labels = [relevance_labels[i] for i in ranked_indices]
+                    future = executor.submit(
+                        self._compute_metrics_for_query,
+                        scores, labels, metric_configs
+                    )
+                    futures.append(future)
 
-            # Compute metrics for this query
-            query_result = {}
-
-            for metric_name, k in metric_configs:
-                if metric_name == 'ndcg':
-                    score = compute_ndcg(ranked_labels, k)
-                elif metric_name == 'mrr':
-                    score = compute_mrr(ranked_labels, k)
-                elif metric_name == 'map':
-                    score = compute_map(ranked_labels, k)
-                elif metric_name == 'hit_rate':
-                    score = compute_hit_rate(ranked_labels, k)
-                else:
-                    continue
-
-                metric_key = f"{metric_name}@{k}" if k else metric_name
-                query_result[metric_key] = score
-
-            query_metrics.append(query_result)
+                # Collect results
+                for future in futures:
+                    query_result = future.result()
+                    query_metrics.append(query_result)
 
         # Aggregate across queries
         aggregated_metrics = aggregate_metrics(query_metrics)
@@ -146,6 +159,45 @@ class RankerEvaluator:
             }
 
         return aggregated_metrics
+
+    def _compute_metrics_for_query(
+        self,
+        scores: List[float],
+        labels: List[int],
+        metric_configs: List[Tuple[str, Optional[int]]]
+    ) -> Dict[str, float]:
+        """Compute all metrics for a single query (parallelizable)
+
+        Args:
+            scores: Prediction scores for documents
+            labels: Relevance labels for documents
+            metric_configs: List of (metric_name, k) tuples
+
+        Returns:
+            Dictionary of metric values
+        """
+        # Rank documents by score
+        ranked_indices = np.argsort(scores)[::-1]
+        ranked_labels = [labels[i] for i in ranked_indices]
+
+        # Compute all metrics
+        query_result = {}
+        for metric_name, k in metric_configs:
+            if metric_name == 'ndcg':
+                score = compute_ndcg(ranked_labels, k)
+            elif metric_name == 'mrr':
+                score = compute_mrr(ranked_labels, k)
+            elif metric_name == 'map':
+                score = compute_map(ranked_labels, k)
+            elif metric_name == 'hit_rate':
+                score = compute_hit_rate(ranked_labels, k)
+            else:
+                continue
+
+            metric_key = f"{metric_name}@{k}" if k else metric_name
+            query_result[metric_key] = score
+
+        return query_result
 
     def _parse_metrics(
         self,
@@ -178,10 +230,11 @@ class RankerEvaluator:
         relevance_qrels: Dict[int, List[int]],
         retriever_top_k: int = 100,
         rerank_top_k: int = 10,
-        retriever_model: Optional[str] = None
+        retriever_model: Optional[str] = None,
+        cache_corpus: bool = True
     ) -> Dict[str, float]:
         """
-        Evaluate full retrieval + reranking pipeline.
+        Evaluate full retrieval + reranking pipeline with corpus caching.
 
         Args:
             queries: List of queries
@@ -190,6 +243,7 @@ class RankerEvaluator:
             retriever_top_k: Number of documents to retrieve
             rerank_top_k: Number of documents to rerank
             retriever_model: Bi-encoder model for initial retrieval
+            cache_corpus: Cache corpus embeddings for faster evaluation
 
         Returns:
             Dictionary with evaluation metrics
@@ -202,12 +256,20 @@ class RankerEvaluator:
             retriever = SentenceTransformer(retriever_model)
             logger.info(f"Loaded retriever: {retriever_model}")
 
-            # Encode corpus
-            corpus_embeddings = retriever.encode(
-                corpus,
-                show_progress_bar=True,
-                convert_to_tensor=True
-            )
+            # Encode corpus (with optional caching)
+            if cache_corpus and hasattr(self, '_cached_corpus_embeddings'):
+                logger.info("Using cached corpus embeddings")
+                corpus_embeddings = self._cached_corpus_embeddings
+            else:
+                logger.info("🔄 Encoding corpus...")
+                corpus_embeddings = retriever.encode(
+                    corpus,
+                    show_progress_bar=True,
+                    convert_to_tensor=True
+                )
+                if cache_corpus:
+                    self._cached_corpus_embeddings = corpus_embeddings
+                    logger.info("Corpus embeddings cached for future use")
         else:
             # Skip retrieval step, use all documents
             retriever = None

@@ -4,50 +4,24 @@ Test the best trained model with sample queries.
 Responsibility: Only testing/inference, finds best model automatically.
 """
 
-import sys
-import os
-from pathlib import Path
 import argparse
+from pathlib import Path
 
-# Add the parent directory to sys.path
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
+# Import shared utilities
+from cli.utils import (
+    setup_project_path,
+    setup_logging,
+    find_best_model
+)
 
-import logging
+# Setup project imports
+setup_project_path()
+
+# Setup logging
+logger = setup_logging()
+
+# Now import semantic_ranker modules
 from semantic_ranker.models import CrossEncoderModel
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def find_best_model():
-    """Find the best model in the models directory."""
-    models_dir = Path("./models")
-
-    if not models_dir.exists():
-        logger.error("❌ No models directory found. Train a model first.")
-        return None
-
-    best_models = []
-    for model_dir in models_dir.iterdir():
-        if model_dir.is_dir():
-            best_path = model_dir / "best"
-            # Check for both regular models and LoRA models
-            has_model = (best_path / "model.safetensors").exists() or (best_path / "adapter_model.safetensors").exists()
-            if best_path.exists() and has_model:
-                mtime = best_path.stat().st_mtime
-                best_models.append((str(best_path), mtime, model_dir.name))
-
-    if not best_models:
-        logger.error("❌ No trained models found. Train a model first.")
-        return None
-
-    best_models.sort(key=lambda x: x[1], reverse=True)
-    best_path, _, model_name = best_models[0]
-
-    logger.info(f"📍 Using best model: {model_name}")
-    return best_path
 
 
 def get_sample_queries(domain="general"):
