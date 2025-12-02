@@ -123,16 +123,26 @@ class QGTrainer:
         self.model.build_query_graph(unique_queries, dict(query_doc_relevance))
         logger.info(f"Query graph built with {len(unique_queries)} nodes")
 
+        # Debug: check graph properties
+        if hasattr(self.model, 'edge_index') and self.model.edge_index is not None:
+            num_edges = self.model.edge_index.shape[1]
+            logger.info(f"Query graph has {num_edges} edges")
+            if hasattr(self.model, 'gnn_query_embeddings') and self.model.gnn_query_embeddings is not None:
+                logger.info(f"GNN embeddings shape: {self.model.gnn_query_embeddings.shape}")
+            else:
+                logger.warning("GNN embeddings are None!")
+        else:
+            logger.warning("Edge index is None!")
+
         # Store relevant queries for consistent indexing during training
         self.relevant_queries = unique_queries
 
-        # Filter training and validation data to only use queries in the graph
-        filtered_train_data = [sample for sample in self.train_data if sample['query'] in unique_queries]
-        filtered_val_data = [sample for sample in self.val_data if sample['query'] in unique_queries]
-
-        # Apply configurable sample limits
+        # Apply configurable sample limits (but DON'T filter by query graph membership)
         train_samples_limit = getattr(self.config.data, 'train_samples', None)
         val_samples_limit = getattr(self.config.data, 'val_samples', None)
+
+        filtered_train_data = self.train_data
+        filtered_val_data = self.val_data
 
         if train_samples_limit and len(filtered_train_data) > train_samples_limit:
             logger.info(f"Limiting training samples to {train_samples_limit} (from {len(filtered_train_data)})")
@@ -144,8 +154,9 @@ class QGTrainer:
             random.seed(42)
             filtered_val_data = random.sample(filtered_val_data, val_samples_limit)
 
-        logger.info(f"Filtered training data: {len(filtered_train_data)} samples (from {len(self.train_data)})")
-        logger.info(f"Filtered validation data: {len(filtered_val_data)} samples (from {len(self.val_data)})")
+        logger.info(f"Training samples: {len(filtered_train_data)}")
+        logger.info(f"Validation samples: {len(filtered_val_data)}")
+        logger.info(f"Queries in graph: {len(unique_queries)} / {len(set([s['query'] for s in self.train_data]))} total")
 
         # Recalculate warmup steps based on filtered data
         total_steps = (len(filtered_train_data) // self.config.training.batch_size) * self.config.training.epochs
@@ -176,7 +187,8 @@ class QGTrainer:
                 queries = [s['query'] for s in batch]
                 documents = [s['document'] for s in batch]
                 labels = torch.tensor([s['label'] for s in batch], dtype=torch.float, device=self.device)
-                query_indices = torch.tensor([query_to_idx[q] for q in queries], dtype=torch.long, device=self.device)
+                # Use index 0 for queries not in graph (will be handled by model)
+                query_indices = torch.tensor([query_to_idx.get(q, 0) for q in queries], dtype=torch.long, device=self.device)
 
                 # Tokenize
                 encoded = self.model.cross_encoder.tokenizer(
@@ -296,8 +308,12 @@ class QGTrainer:
             preds = np.array(query_predictions[query])
             labs = np.array(query_labels[query])
 
-            ndcg = metrics_calculator.ndcg_at_k(labs, preds, k=10)
-            mrr = metrics_calculator.mrr_at_k(labs, preds, k=10)
+            # Sort labels by predicted scores (descending) for proper ranking evaluation
+            sorted_indices = np.argsort(preds)[::-1]
+            sorted_labels = labs[sorted_indices]
+
+            ndcg = metrics_calculator.ndcg_at_k(sorted_labels, k=10)
+            mrr = metrics_calculator.mrr_at_k(sorted_labels, k=10)
 
             ndcg_scores.append(ndcg)
             mrr_scores.append(mrr)

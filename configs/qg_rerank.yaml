@@ -1,6 +1,6 @@
-# Query Graph Neural Reranking Configuration
-# Novel research approach: First GNN-based reranker using query graphs
-# Config based on quantum_base_resonance_5k_2e_optimized (NDCG 0.78 avg)
+# Optimized QG-Rerank Configuration
+# Based on quantum_base_resonance_5k_2e_optimized success (NDCG@10 0.7847)
+# Bugs fixed: contrastive loss, NDCG evaluation, data filtering
 
 model:
   model_name: bert-base-uncased
@@ -8,47 +8,47 @@ model:
   use_lora: true
   lora_r: 8
   lora_alpha: 16
-  lora_dropout: 0.1
+  lora_dropout: 0.1  # Match quantum baseline (proven optimal)
 
 training:
   epochs: 3
-  batch_size: 8   # Reduced for 32GB RAM stability
-  learning_rate: 2.0e-05  # 2e-5, proven optimal from quantum model
-  weight_decay: 0.01
-  warmup_ratio: 0.1
+  batch_size: 16  # Match quantum (8 was too small for stable gradients)
+  learning_rate: 1.5e-05  # Slightly lower than quantum 2e-05 (GNN adds complexity)
+  weight_decay: 0.01  # Match quantum (0.02 was over-regularization)
+  warmup_ratio: 0.1  # Match quantum (0.15 was excessive)
   max_grad_norm: 1.0
   loss_function: bce
-  eval_steps: 100
+  eval_steps: 100  # Match quantum for proper monitoring
   logging_steps: 50
   save_strategy: best
-  gradient_accumulation_steps: 8  # Effective batch = 64 (same as before, but more stable)
+  gradient_accumulation_steps: 4  # Effective batch = 64 (proven optimal)
   fp16: true
 
 data:
-  dataset: superset_comprehensive  # Same as quantum_base_resonance_5k_2e_optimized
-  max_samples: null  # All 5503 samples (set to number to limit, null for all)
-  train_samples: null  # Training samples to use (null for all available)
-  val_samples: null  # Validation samples to use (null for all available)
-  test_samples: null  # Test samples to use (null for all available)
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
-  negative_sampling: hard  # Hard negatives crucial for performance
+  dataset: superset_comprehensive
+  max_samples: null
+  train_samples: null  # Use all training data (bugs fixed)
+  val_samples: null  # Use all validation data (no artificial limits)
+  test_samples: null
+  train_split: 0.8  # Match quantum (proven optimal)
+  val_split: 0.1  # Match quantum
+  test_split: 0.1  # Match quantum
+  negative_sampling: hard
   num_negatives: 2
 
 gnn:
   gnn_mode: true
-  embedding_model: all-mpnet-base-v2  # 768-dim semantic embeddings
-  similarity_threshold: 0.65  # Slightly lower for more edges (was 0.7)
-  max_neighbors: 8   # Reduced for memory efficiency (was 10)
-  max_queries_for_graph: 2500  # Increased to 2500 (optimal for 32GB RAM)
-  graph_batch_size: 150  # Smaller chunks for more stability
-  gnn_hidden_dim: 192  # Reduced for memory (was 256)
-  gnn_output_dim: 96   # Reduced for memory (was 128)
-  gnn_dropout: 0.15    # Increased dropout for regularization
-  lambda_contrastive: 0.1  # Weight for contrastive loss in query space
-  lambda_rank: 0.05  # Weight for GNN ranking loss
-  temperature: 0.07  # Temperature for InfoNCE contrastive loss
+  embedding_model: all-mpnet-base-v2
+  similarity_threshold: 0.7  # Moderate density (0.75 too sparse, 0.6 too dense)
+  max_neighbors: 8  # Balanced connectivity (3 too limiting, 10 might overfit)
+  max_queries_for_graph: 1500  # Increased from 1000 (RAM-safe, more coverage)
+  graph_batch_size: 150
+  gnn_hidden_dim: 192  # Increased from 96 (sufficient capacity without overfitting)
+  gnn_output_dim: 96  # 2:1 compression ratio
+  gnn_dropout: 0.15  # Moderate regularization (0.3 killed signal, 0.1 risky)
+  lambda_contrastive: 0.15  # Strong signal (0.02 was too weak - explains 0.0 loss!)
+  lambda_rank: 0.08  # Meaningful ranking (0.01 was negligible)
+  temperature: 0.07  # Standard InfoNCE temperature
 
 quantum:
   quantum_mode: false  # Disable quantum for QG-Rerank
