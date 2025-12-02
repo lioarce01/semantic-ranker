@@ -27,7 +27,7 @@ def compute_ndcg(
     Returns:
         NDCG score
     """
-    if not relevance_scores:
+    if len(relevance_scores) == 0:
         return 0.0
 
     if k is not None:
@@ -69,7 +69,7 @@ def compute_mrr(
     Returns:
         MRR score (reciprocal rank of first relevant doc)
     """
-    if not relevance_labels:
+    if len(relevance_labels) == 0:
         return 0.0
 
     if k is not None:
@@ -100,7 +100,7 @@ def compute_map(
     Returns:
         AP score
     """
-    if not relevance_labels:
+    if len(relevance_labels) == 0:
         return 0.0
 
     if k is not None:
@@ -139,7 +139,7 @@ def compute_hit_rate(
     Returns:
         1.0 if any relevant doc in top-k, else 0.0
     """
-    if not relevance_labels:
+    if len(relevance_labels) == 0:
         return 0.0
 
     if k is not None:
@@ -164,7 +164,7 @@ def compute_precision_at_k(
     Returns:
         Precision@k score
     """
-    if not relevance_labels or k == 0:
+    if len(relevance_labels) == 0 or k == 0:
         return 0.0
 
     top_k = relevance_labels[:k]
@@ -187,7 +187,7 @@ def compute_recall_at_k(
     Returns:
         Recall@k score
     """
-    if not relevance_labels:
+    if len(relevance_labels) == 0:
         return 0.0
 
     total_relevant = sum(relevance_labels)
@@ -267,7 +267,7 @@ def aggregate_metrics(
     Returns:
         Dictionary with averaged metrics
     """
-    if not query_metrics:
+    if len(query_metrics) == 0:
         return {}
 
     # Get all metric names
@@ -292,12 +292,15 @@ class RankingMetrics:
         """Initialize metrics calculator."""
         pass
 
-    def ndcg_at_k(self, relevance_labels: List[int], k: int) -> float:
+    def ndcg_at_k(self, relevance_labels, relevance_scores=None, k=None) -> float:
         """Compute NDCG@k."""
-        return compute_ndcg(relevance_labels, k)
+        # For NDCG, use relevance_scores (predicted scores) if available, otherwise labels
+        scores_to_use = relevance_scores if relevance_scores is not None else relevance_labels
+        return compute_ndcg(scores_to_use, k)
 
-    def mrr_at_k(self, relevance_labels: List[int], k: int) -> float:
+    def mrr_at_k(self, relevance_labels, relevance_scores=None, k=None) -> float:
         """Compute MRR@k."""
+        # For MRR, always use relevance_labels (binary relevance)
         return compute_mrr(relevance_labels, k)
 
     def map_at_k(self, relevance_labels: List[int], k: int) -> float:

@@ -45,6 +45,9 @@ class DataConfig:
     """Data-related configuration"""
     dataset: str = "msmarco"
     max_samples: Optional[int] = None
+    train_samples: Optional[int] = None  # Limit training samples after filtering
+    val_samples: Optional[int] = None    # Limit validation samples after filtering
+    test_samples: Optional[int] = None   # Limit test samples after filtering
     train_split: float = 0.8
     val_split: float = 0.1
     test_split: float = 0.1
@@ -79,6 +82,8 @@ class GNNConfig:
     embedding_model: str = "all-mpnet-base-v2"
     similarity_threshold: float = 0.7
     max_neighbors: int = 10
+    max_queries_for_graph: int = 200  # Maximum queries for graph construction
+    graph_batch_size: int = 200       # Chunk size for memory-efficient graph building
     gnn_hidden_dim: int = 256
     gnn_output_dim: int = 128
     gnn_dropout: float = 0.1

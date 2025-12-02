@@ -13,6 +13,7 @@ import torch
 from tqdm import tqdm
 
 from ..models.cross_encoder import CrossEncoderModel
+from ..qg_reranker import QueryGraphReranker
 from .metrics import (
     compute_ndcg,
     compute_mrr,
@@ -51,14 +52,30 @@ class RankerEvaluator:
 
         if model is not None:
             self.model = model
+            self.model_type = type(model).__name__
         elif model_path is not None:
             logger.info(f"Loading model from {model_path}")
-            self.model = CrossEncoderModel.load(model_path)
+            model_path = Path(model_path)
+
+            # Check if this is a QG-Reranker model
+            if (model_path / "qg_config.json").exists():
+                logger.info("Detected QueryGraphReranker model")
+                self.model = QueryGraphReranker.load(str(model_path))
+                self.model_type = "QueryGraphReranker"
+            else:
+                logger.info("Detected CrossEncoder model")
+                self.model = CrossEncoderModel.load(str(model_path))
+                self.model_type = "CrossEncoderModel"
         else:
             raise ValueError("Either model_path or model must be provided")
 
-        self.model.model.to(self.device)
-        self.model.model.eval()
+        # Move to device and set eval mode
+        if self.model_type == "QueryGraphReranker":
+            self.model.to(self.device)
+            self.model.eval()
+        else:
+            self.model.model.to(self.device)
+            self.model.model.eval()
 
         logger.info(f"Evaluator initialized on {self.device}")
 

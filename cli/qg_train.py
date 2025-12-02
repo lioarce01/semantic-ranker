@@ -63,12 +63,50 @@ class QGTrainer:
         unique_queries = list(set(train_queries))
 
         # Limit queries for memory efficiency (query graphs scale O(n²))
-        max_queries_for_graph = min(200, len(unique_queries))  # Limit to 200 queries max
+        max_queries_for_graph = getattr(self.config.gnn, 'max_queries_for_graph', 200)
+        max_queries_for_graph = min(max_queries_for_graph, len(unique_queries))
+
         if len(unique_queries) > max_queries_for_graph:
             logger.warning(f"Limiting query graph to {max_queries_for_graph} queries (from {len(unique_queries)}) for memory efficiency")
             # Sample diverse queries instead of just taking the first ones
+            # Use stratified sampling to maintain query diversity
             import random
-            unique_queries = random.sample(unique_queries, max_queries_for_graph)
+            random.seed(42)  # For reproducibility
+
+            # Try to sample queries that have different characteristics
+            if len(unique_queries) > max_queries_for_graph * 2:
+                # If we have many queries, use more sophisticated sampling
+                # Sample based on query length diversity
+                query_lengths = [(q, len(q.split())) for q in unique_queries]
+                query_lengths.sort(key=lambda x: x[1])
+
+                # Sample from different length ranges
+                samples_per_range = max_queries_for_graph // 3
+                sampled_queries = set()
+
+                # Short queries
+                short_queries = [q for q, l in query_lengths[:len(query_lengths)//3]]
+                sampled_queries.update(random.sample(short_queries, min(samples_per_range, len(short_queries))))
+
+                # Medium queries
+                medium_queries = [q for q, l in query_lengths[len(query_lengths)//3:2*len(query_lengths)//3]]
+                sampled_queries.update(random.sample(medium_queries, min(samples_per_range, len(medium_queries))))
+
+                # Long queries
+                long_queries = [q for q, l in query_lengths[2*len(query_lengths)//3:]]
+                sampled_queries.update(random.sample(long_queries, min(samples_per_range, len(long_queries))))
+
+                # Fill remaining slots randomly if needed
+                remaining_slots = max_queries_for_graph - len(sampled_queries)
+                if remaining_slots > 0:
+                    available_queries = [q for q in unique_queries if q not in sampled_queries]
+                    if available_queries:
+                        sampled_queries.update(random.sample(available_queries, min(remaining_slots, len(available_queries))))
+
+                unique_queries = list(sampled_queries)
+            else:
+                # Simple random sampling for smaller datasets
+                unique_queries = random.sample(unique_queries, max_queries_for_graph)
 
         # Create query-doc relevance mapping for graph construction
         query_doc_relevance = defaultdict(list)
@@ -91,6 +129,20 @@ class QGTrainer:
         # Filter training and validation data to only use queries in the graph
         filtered_train_data = [sample for sample in self.train_data if sample['query'] in unique_queries]
         filtered_val_data = [sample for sample in self.val_data if sample['query'] in unique_queries]
+
+        # Apply configurable sample limits
+        train_samples_limit = getattr(self.config.data, 'train_samples', None)
+        val_samples_limit = getattr(self.config.data, 'val_samples', None)
+
+        if train_samples_limit and len(filtered_train_data) > train_samples_limit:
+            logger.info(f"Limiting training samples to {train_samples_limit} (from {len(filtered_train_data)})")
+            random.seed(42)
+            filtered_train_data = random.sample(filtered_train_data, train_samples_limit)
+
+        if val_samples_limit and len(filtered_val_data) > val_samples_limit:
+            logger.info(f"Limiting validation samples to {val_samples_limit} (from {len(filtered_val_data)})")
+            random.seed(42)
+            filtered_val_data = random.sample(filtered_val_data, val_samples_limit)
 
         logger.info(f"Filtered training data: {len(filtered_train_data)} samples (from {len(self.train_data)})")
         logger.info(f"Filtered validation data: {len(filtered_val_data)} samples (from {len(self.val_data)})")
@@ -299,10 +351,12 @@ def main():
 
     # Initialize query graph builder
     logger.info("Initializing query graph builder...")
+    graph_batch_size = getattr(config.gnn, 'graph_batch_size', 200)
     query_graph_builder = QueryGraphBuilder(
         embedding_model=config.gnn.embedding_model,
         similarity_threshold=config.gnn.similarity_threshold,
-        max_neighbors=config.gnn.max_neighbors
+        max_neighbors=config.gnn.max_neighbors,
+        graph_batch_size=graph_batch_size
     )
 
     # Initialize QG-Reranker

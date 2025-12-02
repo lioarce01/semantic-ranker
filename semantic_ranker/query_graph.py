@@ -20,6 +20,7 @@ class QueryGraphBuilder:
         embedding_model: str = 'all-mpnet-base-v2',
         similarity_threshold: float = 0.7,
         max_neighbors: int = 10,
+        graph_batch_size: int = 200,
         device: Optional[str] = None
     ):
         """
@@ -31,6 +32,7 @@ class QueryGraphBuilder:
         """
         self.similarity_threshold = similarity_threshold
         self.max_neighbors = max_neighbors
+        self.graph_batch_size = graph_batch_size
 
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -70,40 +72,68 @@ class QueryGraphBuilder:
         # Clone to make trainable (SentenceTransformer uses inference_mode)
         self.query_embeddings = embeddings.clone().detach().requires_grad_(True)
 
-        # Compute pairwise cosine similarities
-        similarities = torch.nn.functional.cosine_similarity(
-            self.query_embeddings.unsqueeze(1),
-            self.query_embeddings.unsqueeze(0),
-            dim=2
-        )
-
-        # Build edges
+        # Memory-efficient pairwise similarity computation with chunked processing
         edges = []
         edge_weights = []
 
-        for i in range(len(queries)):
-            # Get similarities for query i
-            sim_scores = similarities[i]
+        # Process in chunks to avoid OOM with large query sets
+        chunk_size = min(self.graph_batch_size, len(queries))  # Configurable batch size
 
-            # Mask self-similarity
-            sim_scores[i] = -1
+        for i in range(0, len(queries), chunk_size):
+            end_i = min(i + chunk_size, len(queries))
+            chunk_embeddings_i = self.query_embeddings[i:end_i]
 
-            # Apply threshold
-            valid_neighbors = (sim_scores >= self.similarity_threshold).nonzero(as_tuple=True)[0]
+            for j in range(i, len(queries), chunk_size):  # Start from i to avoid duplicate work
+                end_j = min(j + chunk_size, len(queries))
+                chunk_embeddings_j = self.query_embeddings[j:end_j]
 
-            if len(valid_neighbors) == 0:
-                continue
+                # Compute similarities for this chunk pair
+                similarities_chunk = torch.nn.functional.cosine_similarity(
+                    chunk_embeddings_i.unsqueeze(1),  # [chunk_i, 1, dim]
+                    chunk_embeddings_j.unsqueeze(0),  # [1, chunk_j, dim]
+                    dim=2
+                )  # [chunk_i, chunk_j]
 
-            # Sort by similarity and take top-k
-            neighbor_sims = sim_scores[valid_neighbors]
-            sorted_indices = torch.argsort(neighbor_sims, descending=True)
-            top_neighbors = valid_neighbors[sorted_indices[:self.max_neighbors]]
-            top_sims = neighbor_sims[sorted_indices[:self.max_neighbors]]
+                # Process similarities for each query in chunk_i
+                for local_i in range(similarities_chunk.shape[0]):
+                    global_i = i + local_i
+                    sim_scores = similarities_chunk[local_i]
 
-            # Add edges
-            for j, sim in zip(top_neighbors.tolist(), top_sims.tolist()):
-                edges.append([i, j])
-                edge_weights.append(sim)
+                    # For diagonal chunks, mask self-similarity
+                    if i == j:
+                        sim_scores[local_i] = -1
+
+                    # Apply threshold
+                    valid_neighbors = (sim_scores >= self.similarity_threshold).nonzero(as_tuple=True)[0]
+                    valid_neighbors_global = valid_neighbors + j  # Convert to global indices
+
+                    if len(valid_neighbors) == 0:
+                        continue
+
+                    # Get similarities for valid neighbors
+                    neighbor_sims = sim_scores[valid_neighbors]
+
+                    # Sort by similarity and take top-k
+                    sorted_indices = torch.argsort(neighbor_sims, descending=True)
+                    top_k = min(self.max_neighbors, len(sorted_indices))
+                    top_neighbors_local = valid_neighbors[sorted_indices[:top_k]]
+                    top_neighbors_global = valid_neighbors_global[sorted_indices[:top_k]]
+                    top_sims = neighbor_sims[sorted_indices[:top_k]]
+
+                    # Add edges (only i->j where j > i to avoid duplicates)
+                    for local_j, global_j, sim in zip(top_neighbors_local.tolist(), top_neighbors_global.tolist(), top_sims.tolist()):
+                        if global_j > global_i:
+                            edges.append([global_i, global_j])
+                            edge_weights.append(sim)
+
+                # Clear chunk tensors to free memory
+                del similarities_chunk
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        # Store edges for compatibility
+        self.edges = edges
+        self.edge_weights = edge_weights
 
         # Bonus edges: queries with shared relevant documents
         if query_doc_relevance is not None:

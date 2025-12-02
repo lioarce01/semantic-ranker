@@ -8,7 +8,9 @@ for comprehensive performance assessment and comparison.
 
 import argparse
 import sys
+import logging
 from pathlib import Path
+from datetime import datetime
 
 # Import shared utilities
 from cli.utils import (
@@ -49,6 +51,10 @@ def evaluate_model_on_dataset(model_path: str, dataset_name: str):
         dict: Evaluation results or None if failed
     """
     try:
+        # Temporarily suppress verbose logging
+        original_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.WARNING)
+
         # Load model
         model = CrossEncoderModel.load(model_path)
 
@@ -74,6 +80,10 @@ def evaluate_model_on_dataset(model_path: str, dataset_name: str):
 
         # Evaluate
         results = evaluator.evaluate(eval_data)
+
+        # Restore logging level
+        logging.getLogger().setLevel(original_level)
+
         return results
 
     except Exception as e:
@@ -83,28 +93,42 @@ def evaluate_model_on_dataset(model_path: str, dataset_name: str):
         return None
 
 
-def print_dataset_results(dataset_name: str, results: dict):
+def print_dataset_results(dataset_name: str, results: dict, logger=None):
     """Print concise results for a single dataset."""
     if not results:
-        print(f"{dataset_name}: FAILED")
-        return
+        result_line = f"{dataset_name}: FAILED"
+    else:
+        ndcg10 = results.get('ndcg@10', 0)
+        mrr10 = results.get('mrr@10', 0)
+        map10 = results.get('map@10', 0)
+        result_line = f"{dataset_name}: NDCG@10={ndcg10:.4f} MRR@10={mrr10:.4f} MAP@10={map10:.4f}"
 
-    ndcg10 = results.get('ndcg@10', 0)
-    mrr10 = results.get('mrr@10', 0)
-    map10 = results.get('map@10', 0)
+    print(result_line)
+    # Also write to file if logger has file handler
+    if logger:
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.stream.write(result_line + '\n')
+                handler.stream.flush()
 
-    print(f"{dataset_name}: NDCG@10={ndcg10:.4f} MRR@10={mrr10:.4f} MAP@10={map10:.4f}")
 
-
-def print_summary(all_results: dict, model_name: str):
+def print_summary(all_results: dict, model_name: str, logger=None):
     """Print concise summary."""
     valid_results = [r for r in all_results.values() if r is not None]
     if valid_results:
         avg_ndcg10 = sum(r.get('ndcg@10', 0) for r in valid_results) / len(valid_results)
         avg_mrr10 = sum(r.get('mrr@10', 0) for r in valid_results) / len(valid_results)
-        print(f"AVERAGE: NDCG@10={avg_ndcg10:.4f} MRR@10={avg_mrr10:.4f}")
+        result_line = f"AVERAGE: NDCG@10={avg_ndcg10:.4f} MRR@10={avg_mrr10:.4f}"
     else:
-        print("AVERAGE: NO VALID RESULTS")
+        result_line = "AVERAGE: NO VALID RESULTS"
+
+    print(result_line)
+    # Also write to file if logger has file handler
+    if logger:
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.stream.write(result_line + '\n')
+                handler.stream.flush()
 
 
 def main():
@@ -113,10 +137,12 @@ def main():
                        help='Path to the model directory (e.g., models/my_model/best/)')
     parser.add_argument('--datasets', nargs='+',
                        help='Specific datasets to evaluate (default: all key datasets)')
+    parser.add_argument('--log-file', type=str,
+                       help='Save results to log file (optional)')
 
     args = parser.parse_args()
 
-    # Validate model path
+    # Validate model path first
     model_path = Path(args.model_path)
     if not model_path.exists():
         print(f"ERROR: Model path does not exist: {model_path}")
@@ -124,7 +150,36 @@ def main():
 
     # Get model name for display
     model_name = model_path.parent.name if model_path.name == 'best' else model_path.name
+
+    # Setup logging (always generate log file)
+    if args.log_file:
+        log_filename = args.log_file
+    else:  # Auto-generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"batch_eval_{model_name}_{timestamp}.log"
+
+    # Setup logging with clean format for results
+    logger = logging.getLogger()
+    logger.setLevel(logging.WARNING)  # Suppress verbose messages
+
+    # Create file handler for clean output
+    file_handler = logging.FileHandler(log_filename, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter('%(message)s')
+    file_handler.setFormatter(file_formatter)
+
+    # Add file handler (keep existing console handler but modify format)
+    logger.addHandler(file_handler)
+
+    # Override the console format to be clean
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
+            handler.setFormatter(logging.Formatter('%(message)s'))
+
+    # Print model header (quantum-style format)
     print(f"MODEL: {model_name}")
+    file_handler.stream.write(f"MODEL: {model_name}\n")
+    file_handler.stream.flush()
 
     # Determine which datasets to evaluate
     datasets_to_eval = args.datasets if args.datasets else KEY_DATASETS
@@ -135,9 +190,9 @@ def main():
     for dataset in datasets_to_eval:
         results = evaluate_model_on_dataset(str(model_path), dataset)
         all_results[dataset] = results
-        print_dataset_results(dataset, results)
+        print_dataset_results(dataset, results, logger)
 
-    print_summary(all_results, model_name)
+    print_summary(all_results, model_name, logger)
 
 
 if __name__ == "__main__":

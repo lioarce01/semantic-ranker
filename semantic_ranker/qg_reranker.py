@@ -10,11 +10,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 import numpy as np
+import logging
 from collections import defaultdict
 
 from semantic_ranker.models.cross_encoder import CrossEncoderModel
 from semantic_ranker.query_graph import QueryGraphBuilder
 from semantic_ranker.query_gnn import QueryGNN, QueryGraphAttention
+
+logger = logging.getLogger(__name__)
 
 
 class QueryGraphReranker(nn.Module):
@@ -457,6 +460,69 @@ class QueryGraphReranker(nn.Module):
             json.dump(config, f, indent=2)
 
         logger.info(f"QueryGraphReranker saved to {save_path}")
+
+    @classmethod
+    def load(cls, load_path: str):
+        """
+        Load QueryGraphReranker model and all components.
+
+        Args:
+            load_path: Directory to load model from
+
+        Returns:
+            QueryGraphReranker: Loaded model
+        """
+        from pathlib import Path
+        import json
+
+        load_path = Path(load_path)
+
+        # Load QG config
+        with open(load_path / "qg_config.json", 'r') as f:
+            qg_config = json.load(f)
+
+        # Load cross-encoder
+        ce_path = load_path / "cross_encoder"
+        cross_encoder = CrossEncoderModel.load(str(ce_path))
+
+        # Load query graph builder (recreate with same config)
+        from .query_graph import QueryGraphBuilder
+        query_graph_builder = QueryGraphBuilder(
+            embedding_model="all-mpnet-base-v2",  # Same as training
+            similarity_threshold=0.65,
+            max_neighbors=10
+        )
+
+        # Create model instance
+        model = cls(
+            cross_encoder=cross_encoder,
+            query_graph_builder=query_graph_builder,
+            gnn_hidden_dim=qg_config['gnn_hidden_dim'],
+            gnn_output_dim=qg_config['gnn_output_dim'],
+            gnn_dropout=qg_config['gnn_dropout'],
+            lambda_contrastive=qg_config['lambda_contrastive'],
+            lambda_rank=qg_config['lambda_rank'],
+            temperature=qg_config['temperature']
+        )
+
+        # Load GNN components
+        gnn_state = torch.load(load_path / "gnn_components.pt", map_location='cpu')
+        model.query_gnn.load_state_dict(gnn_state['query_gnn'])
+        model.attention.load_state_dict(gnn_state['attention'])
+        model.predictor.load_state_dict(gnn_state['predictor'])
+
+        # Load query graph data (if exists)
+        graph_path = load_path / "query_graph.pt"
+        if graph_path.exists():
+            graph_data = torch.load(graph_path, map_location='cpu')
+            model.edge_index = graph_data['edge_index']
+            model.edge_weights = graph_data['edge_weights']
+            model.query_embeddings = graph_data['query_embeddings']
+            if 'gnn_query_embeddings' in graph_data:
+                model.gnn_query_embeddings = graph_data['gnn_query_embeddings']
+
+        logger.info(f"QueryGraphReranker loaded from {load_path}")
+        return model
 
     def to(self, device):
         """Move model to device."""

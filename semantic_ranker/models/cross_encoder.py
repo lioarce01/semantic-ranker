@@ -259,7 +259,7 @@ class CrossEncoderModel:
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 
-        # Save model
+        # Save model and config
         if self.use_lora:
             self.model.save_pretrained(save_path)
         else:
@@ -267,6 +267,9 @@ class CrossEncoderModel:
 
         # Save tokenizer
         self.tokenizer.save_pretrained(save_path)
+
+        # Save HuggingFace config.json (required for loading)
+        self.model.config.save_pretrained(save_path)
 
         # Save configuration
         config = {
