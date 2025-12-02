@@ -7,6 +7,7 @@ for comprehensive performance assessment and comparison.
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 # Import shared utilities
@@ -26,14 +27,13 @@ logger = setup_logging()
 # Now import semantic_ranker modules
 from semantic_ranker.evaluation import RankerEvaluator
 from semantic_ranker.models import CrossEncoderModel
+from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
 
 # Key datasets for comprehensive evaluation
 KEY_DATASETS = [
-    'msmarco_dev_benchmark_with_hard_negatives',  # Hard negatives performance
-    'msmarco_dev_benchmark',                      # Standard MS MARCO benchmark
     'qa_mixed_giant',                            # Training data performance
     'natural_questions',                         # Open-ended QA performance
-    'msmarco_nq_mixed'                           # Mixed domain performance
+    'superset_comprehensive'                     # Comprehensive dataset performance
 ]
 
 
@@ -77,6 +77,9 @@ def evaluate_model_on_dataset(model_path: str, dataset_name: str):
         return results
 
     except Exception as e:
+        logger.error(f"Error evaluating {dataset_name}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

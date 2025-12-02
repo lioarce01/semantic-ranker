@@ -60,6 +60,8 @@ class QuantumConfig:
     entanglement_weight: float = 0.3
     quantum_phase: str = "superposition"
     knowledge_preservation_weight: float = 0.5
+    resonance_penalty_scale: float = 0.01
+    entanglement_loss_scale: float = 0.01
 
 
 @dataclass
