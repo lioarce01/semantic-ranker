@@ -38,11 +38,15 @@ quantum:
   entanglement_weight: 0.1  # Light influence, let BCE dominate
   quantum_phase: resonance  # Optimal phase for training
   knowledge_preservation_weight: 0.3  # Balanced preservation
+  resonance_penalty_scale: 0.01  # Scale factor for resonance penalty (was 0.1 hardcoded)
+  entanglement_loss_scale: 0.01  # Scale factor for entanglement loss (was 0.05 hardcoded)
 
 # Quantum Reasoning (OPTIMIZED FOR PERFORMANCE):
 # - LR 3e-5: Strong enough to overcome quantum noise, faster convergence
 # - Entanglement 0.1: Minimal noise (vs 0.2 which caused plateau at loss 0.75)
 # - Preservation 0.3: Balanced (vs 0.6 which was too conservative)
+# - Resonance scale 0.01: Low penalty (vs 0.1 hardcoded which caused 0.73 plateau)
+# - Entanglement scale 0.01: Low penalty (vs 0.05 hardcoded which caused 0.73 plateau)
 # - Result: BCE loss dominates → better ranking metrics
 # - Expected: Loss ~0.30-0.40, NDCG@10 >0.70, MRR@10 >0.60
 

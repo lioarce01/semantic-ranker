@@ -46,11 +46,14 @@ class QuantumResonanceTrainer:
     """
 
     def __init__(self, base_trainer, resonance_threshold=0.35, entanglement_weight=0.3,
-                 knowledge_preservation_weight=0.6):
+                 knowledge_preservation_weight=0.6, resonance_penalty_scale=0.01,
+                 entanglement_loss_scale=0.01):
         self.base_trainer = base_trainer
         self.resonance_threshold = resonance_threshold
         self.entanglement_weight = entanglement_weight
         self.knowledge_preservation_weight = knowledge_preservation_weight
+        self.resonance_penalty_scale = resonance_penalty_scale
+        self.entanglement_loss_scale = entanglement_loss_scale
         self.resonance_frequencies = {}
         self.entanglement_graph = {}
 
@@ -117,7 +120,7 @@ class QuantumResonanceTrainer:
                 # Penalize deviation from expected resonance
                 penalty += torch.abs(predicted_prob - expected_resonance)
 
-        return penalty * 0.1  # Scale factor
+        return penalty * self.resonance_penalty_scale
 
     def _compute_entanglement_loss(self, predictions, batch_queries):
         """Encourage coherent predictions for entangled queries."""
@@ -133,7 +136,7 @@ class QuantumResonanceTrainer:
                             pred_diff = torch.abs(predictions[i] - predictions[j])
                             loss += pred_diff
 
-        return loss * 0.05  # Scale factor
+        return loss * self.entanglement_loss_scale
 
     def collapse_superposition(self, training_data):
         """Collapse quantum superposition states toward optimal rankings."""
@@ -206,6 +209,8 @@ def main():
     entanglement_weight = config.quantum.entanglement_weight
     quantum_phase = config.quantum.quantum_phase
     knowledge_preservation_weight = config.quantum.knowledge_preservation_weight
+    resonance_penalty_scale = config.quantum.resonance_penalty_scale
+    entanglement_loss_scale = config.quantum.entanglement_loss_scale
 
     logger.info("🧬 === QUANTUM RESONANCE FINE-TUNING ===")
     logger.info("🌊 Treating query-document relationships as quantum states")
@@ -256,7 +261,9 @@ def main():
             base_trainer=trainer,
             resonance_threshold=resonance_threshold,
             entanglement_weight=entanglement_weight,
-            knowledge_preservation_weight=knowledge_preservation_weight
+            knowledge_preservation_weight=knowledge_preservation_weight,
+            resonance_penalty_scale=resonance_penalty_scale,
+            entanglement_loss_scale=entanglement_loss_scale
         )
 
         # 3. Quantum data preparation

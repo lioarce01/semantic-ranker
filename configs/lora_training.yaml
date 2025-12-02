@@ -38,6 +38,8 @@ quantum:
   entanglement_weight: 0.3
   quantum_phase: superposition
   knowledge_preservation_weight: 0.5
+  resonance_penalty_scale: 0.01
+  entanglement_loss_scale: 0.01
 
 evaluation:
   metrics:

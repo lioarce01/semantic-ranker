@@ -38,6 +38,8 @@ quantum:
   entanglement_weight: 0.2  # Lower weight (less aggressive)
   quantum_phase: superposition
   knowledge_preservation_weight: 0.7  # HIGHER preservation during retraining
+  resonance_penalty_scale: 0.01  # Scale factor for resonance penalty
+  entanglement_loss_scale: 0.01  # Scale factor for entanglement loss
 
 # Retraining Philosophy:
 # - Lower LR (1e-5): Preserve existing knowledge
