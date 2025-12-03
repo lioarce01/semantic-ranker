@@ -1,6 +1,6 @@
-# Optimized QG-Rerank Configuration
+# Optimized QG-Rerank Configuration - v2
 # Based on quantum_base_resonance_5k_2e_optimized success (NDCG@10 0.7847)
-# Bugs fixed: contrastive loss, NDCG evaluation, data filtering
+# Fixes: contrastive loss, NDCG eval, data filtering, rank loss conflict, graph density
 
 model:
   model_name: bert-base-uncased
@@ -13,7 +13,7 @@ model:
 training:
   epochs: 3
   batch_size: 16  # Match quantum (8 was too small for stable gradients)
-  learning_rate: 1.5e-05  # Slightly lower than quantum 2e-05 (GNN adds complexity)
+  learning_rate: 2.0e-05  # Match quantum exactly (1.5e-05 was too conservative)
   weight_decay: 0.01  # Match quantum (0.02 was over-regularization)
   warmup_ratio: 0.1  # Match quantum (0.15 was excessive)
   max_grad_norm: 1.0
@@ -39,15 +39,15 @@ data:
 gnn:
   gnn_mode: true
   embedding_model: all-mpnet-base-v2
-  similarity_threshold: 0.7  # Moderate density (0.75 too sparse, 0.6 too dense)
-  max_neighbors: 8  # Balanced connectivity (3 too limiting, 10 might overfit)
+  similarity_threshold: 0.65  # Lower threshold for denser graph (0.7 gave only 770 edges!)
+  max_neighbors: 10  # More neighbors for richer cross-query learning
   max_queries_for_graph: 1500  # Increased from 1000 (RAM-safe, more coverage)
   graph_batch_size: 150
   gnn_hidden_dim: 192  # Increased from 96 (sufficient capacity without overfitting)
   gnn_output_dim: 96  # 2:1 compression ratio
   gnn_dropout: 0.15  # Moderate regularization (0.3 killed signal, 0.1 risky)
   lambda_contrastive: 0.15  # Strong signal (0.02 was too weak - explains 0.0 loss!)
-  lambda_rank: 0.08  # Meaningful ranking (0.01 was negligible)
+  lambda_rank: 0.03  # Reduced from 0.08 (was fighting BCE, causing rank loss increase)
   temperature: 0.07  # Standard InfoNCE temperature
 
 quantum:
