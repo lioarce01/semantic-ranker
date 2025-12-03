@@ -36,12 +36,13 @@ from semantic_ranker.training import CrossEncoderTrainer
 class QGTrainer:
     """Trainer for Query Graph Neural Reranker."""
 
-    def __init__(self, model, config, train_data, val_data):
+    def __init__(self, model, config, train_data, val_data, output_dir=None):
         self.model = model
         self.config = config
         self.train_data = train_data
         self.val_data = val_data
         self.relevant_queries = None  # Will be set during training
+        self.output_dir = output_dir  # Directory to save best models
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
 
@@ -172,11 +173,24 @@ class QGTrainer:
 
         for epoch in range(self.config.training.epochs):
             logger.info(f"\nEpoch {epoch + 1}/{self.config.training.epochs}")
+
+            # DQGAN Phase 4: Refresh query graph every epoch
+            graph_update_frequency = getattr(self.config.gnn, 'graph_update_frequency', 1)
+            if epoch > 0 and epoch % graph_update_frequency == 0:
+                logger.info(f"🔄 Refreshing query graph at epoch {epoch + 1}")
+                try:
+                    self.model.build_query_graph(self.relevant_queries, dict(query_doc_relevance))
+                    logger.info(f"✅ Query graph refreshed with {len(self.relevant_queries)} nodes")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to refresh query graph: {e}")
+
             self.model.train()
 
             epoch_loss = 0.0
             epoch_bce = 0.0
             epoch_contrastive = 0.0
+            epoch_coherence = 0.0
+            epoch_alignment = 0.0
             epoch_rank = 0.0
 
             random.shuffle(filtered_train_data)
@@ -225,18 +239,33 @@ class QGTrainer:
                 epoch_loss += loss_dict['loss']
                 epoch_bce += loss_dict['bce_loss']
                 epoch_contrastive += loss_dict['contrastive_loss']
-                epoch_rank += loss_dict['rank_loss']
+                epoch_coherence += loss_dict.get('coherence_loss', 0.0)
+                epoch_alignment += loss_dict.get('alignment_loss', 0.0)
+                epoch_rank += loss_dict.get('rank_loss', 0.0)
 
                 global_step += 1
 
                 if global_step % self.config.training.logging_steps == 0:
-                    avg_loss = epoch_loss / (step // self.config.training.batch_size + 1)
-                    logger.info(
-                        f"Step {global_step} | Loss: {avg_loss:.4f} | "
-                        f"BCE: {epoch_bce/(step//self.config.training.batch_size+1):.4f} | "
-                        f"Contrastive: {epoch_contrastive/(step//self.config.training.batch_size+1):.4f} | "
-                        f"Rank: {epoch_rank/(step//self.config.training.batch_size+1):.4f}"
-                    )
+                    num_batches = (step // self.config.training.batch_size + 1)
+                    avg_loss = epoch_loss / num_batches
+
+                    # DQGAN: show new loss components
+                    use_dqgan = getattr(self.config.gnn, 'use_dqgan', True)
+                    if use_dqgan:
+                        logger.info(
+                            f"Step {global_step} | Loss: {avg_loss:.4f} | "
+                            f"BCE: {epoch_bce/num_batches:.4f} | "
+                            f"Contrastive: {epoch_contrastive/num_batches:.4f} | "
+                            f"Coherence: {epoch_coherence/num_batches:.4f} | "
+                            f"Alignment: {epoch_alignment/num_batches:.4f}"
+                        )
+                    else:
+                        logger.info(
+                            f"Step {global_step} | Loss: {avg_loss:.4f} | "
+                            f"BCE: {epoch_bce/num_batches:.4f} | "
+                            f"Contrastive: {epoch_contrastive/num_batches:.4f} | "
+                            f"Rank: {epoch_rank/num_batches:.4f}"
+                        )
 
                 if global_step % self.config.training.eval_steps == 0:
                     val_metrics = self.evaluate(filtered_val_data, query_to_idx)
@@ -245,6 +274,13 @@ class QGTrainer:
                     if val_metrics['ndcg@10'] > best_val_ndcg:
                         best_val_ndcg = val_metrics['ndcg@10']
                         logger.info(f"New best validation NDCG@10: {best_val_ndcg:.4f}")
+
+                        # Save best model immediately
+                        if self.output_dir is not None:
+                            logger.info(f"💾 Saving best model to {self.output_dir}")
+                            self.model.save(str(self.output_dir))
+                            save_config_with_model(self.config, self.output_dir.parent)
+                            logger.info("✅ Best model saved")
 
                     self.model.train()
 
@@ -368,36 +404,53 @@ def main():
     # Initialize query graph builder
     logger.info("Initializing query graph builder...")
     graph_batch_size = getattr(config.gnn, 'graph_batch_size', 200)
+    use_knn = getattr(config.gnn, 'use_knn', True)
+    k_neighbors = getattr(config.gnn, 'k_neighbors', 15)
+
     query_graph_builder = QueryGraphBuilder(
         embedding_model=config.gnn.embedding_model,
         similarity_threshold=config.gnn.similarity_threshold,
         max_neighbors=config.gnn.max_neighbors,
-        graph_batch_size=graph_batch_size
+        graph_batch_size=graph_batch_size,
+        use_knn=use_knn,
+        k_neighbors=k_neighbors
     )
 
     # Initialize QG-Reranker
     logger.info("Initializing Query Graph Reranker...")
+    use_dqgan = getattr(config.gnn, 'use_dqgan', True)
+    gnn_num_heads = getattr(config.gnn, 'gnn_num_heads', 4)
+    gnn_num_layers = getattr(config.gnn, 'gnn_num_layers', 3)
+    lambda_coherence = getattr(config.gnn, 'lambda_coherence', 0.15)
+    lambda_alignment = getattr(config.gnn, 'lambda_alignment', 0.1)
+
     model = QueryGraphReranker(
         cross_encoder=cross_encoder,
         query_graph_builder=query_graph_builder,
         gnn_hidden_dim=config.gnn.gnn_hidden_dim,
         gnn_output_dim=config.gnn.gnn_output_dim,
         gnn_dropout=config.gnn.gnn_dropout,
+        gnn_num_heads=gnn_num_heads,
+        gnn_num_layers=gnn_num_layers,
         lambda_contrastive=config.gnn.lambda_contrastive,
         lambda_rank=config.gnn.lambda_rank,
-        temperature=config.gnn.temperature
+        lambda_coherence=lambda_coherence,
+        lambda_alignment=lambda_alignment,
+        temperature=config.gnn.temperature,
+        use_dqgan=use_dqgan
     )
 
-    # Train
-    trainer = QGTrainer(model, config, train_data, val_data)
-    trainer.train()
-
-    # Save model
+    # Prepare output directory
     experiment_name = args.experiment_name or f"qg_rerank_{config.data.dataset}"
     output_dir = Path('models') / experiment_name / 'best'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Saving model to {output_dir}")
+    # Train (with auto-save on best validation)
+    trainer = QGTrainer(model, config, train_data, val_data, output_dir=output_dir)
+    trainer.train()
+
+    # Final save (in case no validation improvements happened)
+    logger.info(f"Saving final model to {output_dir}")
     model.save(str(output_dir))
     save_config_with_model(config, output_dir.parent)
 

@@ -15,7 +15,13 @@ from collections import defaultdict
 
 from semantic_ranker.models.cross_encoder import CrossEncoderModel
 from semantic_ranker.query_graph import QueryGraphBuilder
-from semantic_ranker.query_gnn import QueryGNN, QueryGraphAttention
+from semantic_ranker.query_gnn import (
+    QueryGNN,
+    GraphAttentionNetwork,
+    QueryGraphAttention,
+    LearnableQueryEncoder,
+    CrossAttentionFusion
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +40,14 @@ class QueryGraphReranker(nn.Module):
         gnn_hidden_dim: int = 256,
         gnn_output_dim: int = 128,
         gnn_dropout: float = 0.1,
+        gnn_num_heads: int = 4,
+        gnn_num_layers: int = 3,
         lambda_contrastive: float = 0.1,
         lambda_rank: float = 0.05,
-        temperature: float = 0.07
+        lambda_coherence: float = 0.15,
+        lambda_alignment: float = 0.1,
+        temperature: float = 0.07,
+        use_dqgan: bool = True  # Enable DQGAN enhancements
     ):
         """
         Args:
@@ -45,31 +56,70 @@ class QueryGraphReranker(nn.Module):
             gnn_hidden_dim: GNN hidden dimension
             gnn_output_dim: GNN output dimension
             gnn_dropout: GNN dropout rate
+            gnn_num_heads: Number of attention heads for GAT (DQGAN)
+            gnn_num_layers: Number of GNN layers (DQGAN uses 3)
             lambda_contrastive: Weight for contrastive loss
             lambda_rank: Weight for GNN ranking loss
+            lambda_coherence: Weight for graph coherence loss (DQGAN)
+            lambda_alignment: Weight for CE-GNN alignment loss (DQGAN)
             temperature: Temperature for contrastive loss
+            use_dqgan: Enable DQGAN architecture enhancements
         """
         super().__init__()
 
         self.cross_encoder = cross_encoder
         self.query_graph_builder = query_graph_builder
+        self.use_dqgan = use_dqgan
 
-        # GNN for query embeddings
+        # DQGAN Phase 1: Learnable Query Encoder
         query_emb_dim = 768  # all-mpnet-base-v2 dimension
-        self.query_gnn = QueryGNN(
-            input_dim=query_emb_dim,
-            hidden_dim=gnn_hidden_dim,
-            output_dim=gnn_output_dim,
-            dropout=gnn_dropout
-        )
+        learnable_query_dim = gnn_hidden_dim  # Project to GNN input dimension
 
-        # Attention for combining GNN and cross-encoder
+        if use_dqgan:
+            self.query_encoder = LearnableQueryEncoder(
+                input_dim=query_emb_dim,
+                output_dim=learnable_query_dim,
+                dropout=gnn_dropout
+            )
+        else:
+            self.query_encoder = None
+
+        # GNN for query embeddings (choose architecture based on use_dqgan)
+        gnn_input_dim = learnable_query_dim if use_dqgan else query_emb_dim
+
+        if use_dqgan:
+            # DQGAN Phase 2: 3-layer Graph Attention Network
+            self.query_gnn = GraphAttentionNetwork(
+                input_dim=gnn_input_dim,
+                hidden_dim=gnn_hidden_dim,
+                output_dim=gnn_output_dim,
+                num_heads=gnn_num_heads,
+                dropout=gnn_dropout
+            )
+        else:
+            # Original 2-layer GCN
+            self.query_gnn = QueryGNN(
+                input_dim=gnn_input_dim,
+                hidden_dim=gnn_hidden_dim,
+                output_dim=gnn_output_dim,
+                dropout=gnn_dropout
+            )
+
+        # DQGAN Phase 1: Cross-Attention Fusion (replaces scalar attention)
         ce_hidden_dim = cross_encoder.model.config.hidden_size
-        self.attention = QueryGraphAttention(
-            query_dim=gnn_output_dim,
-            cross_encoder_dim=ce_hidden_dim,
-            hidden_dim=128
-        )
+        if use_dqgan:
+            self.attention = CrossAttentionFusion(
+                query_dim=gnn_output_dim,
+                cross_encoder_dim=ce_hidden_dim,
+                num_heads=4,
+                dropout=gnn_dropout
+            )
+        else:
+            self.attention = QueryGraphAttention(
+                query_dim=gnn_output_dim,
+                cross_encoder_dim=ce_hidden_dim,
+                hidden_dim=128
+            )
 
         # Final prediction head
         self.predictor = nn.Linear(ce_hidden_dim, 1)
@@ -77,7 +127,22 @@ class QueryGraphReranker(nn.Module):
         # Loss weights
         self.lambda_contrastive = lambda_contrastive
         self.lambda_rank = lambda_rank
+        self.lambda_coherence = lambda_coherence
+        self.lambda_alignment = lambda_alignment
         self.temperature = temperature
+
+        # DQGAN Phase 3: Adaptive loss normalization (EMA)
+        if use_dqgan:
+            self.register_buffer('bce_ema', torch.tensor(1.0))
+            self.register_buffer('contrastive_ema', torch.tensor(1.0))
+            self.register_buffer('coherence_ema', torch.tensor(1.0))
+            self.register_buffer('alignment_ema', torch.tensor(1.0))
+            self.ema_decay = 0.9
+        else:
+            self.bce_ema = None
+            self.contrastive_ema = None
+            self.coherence_ema = None
+            self.alignment_ema = None
 
         # Cache for query graph
         self.edge_index = None
@@ -99,13 +164,8 @@ class QueryGraphReranker(nn.Module):
         self.edge_weights = edge_weights.to(self.cross_encoder.model.device)
         self.query_embeddings = query_embeddings.to(self.cross_encoder.model.device)
 
-        # Run GNN
-        with torch.no_grad():
-            self.gnn_query_embeddings = self.query_gnn(
-                self.query_embeddings,
-                self.edge_index,
-                self.edge_weights
-            )
+        # Initialize GNN query embeddings cache (will be computed in forward pass with gradients)
+        self.gnn_query_embeddings = None
 
     def forward(
         self,
@@ -126,6 +186,22 @@ class QueryGraphReranker(nn.Module):
         Returns:
             Dict with logits and intermediate outputs
         """
+        # Compute GNN embeddings with gradients enabled (if graph is available)
+        gnn_embeddings = None
+        if self.edge_index is not None and self.query_embeddings is not None:
+            # DQGAN Phase 1: Apply learnable query encoder first
+            if self.use_dqgan and self.query_encoder is not None:
+                encoded_queries = self.query_encoder(self.query_embeddings)
+            else:
+                encoded_queries = self.query_embeddings
+
+            # Run GNN forward pass WITH gradients (critical fix!)
+            gnn_embeddings = self.query_gnn(
+                encoded_queries,
+                self.edge_index,
+                self.edge_weights
+            )
+
         # Get cross-encoder outputs
         ce_inputs = {
             'input_ids': input_ids,
@@ -142,9 +218,9 @@ class QueryGraphReranker(nn.Module):
         pooled = hidden_states[:, 0, :]  # [batch_size, hidden_dim]
 
         # Apply query graph attention if graph is available
-        if self.gnn_query_embeddings is not None:
+        if gnn_embeddings is not None:
             attended = self.attention(
-                self.gnn_query_embeddings,
+                gnn_embeddings,
                 pooled,
                 query_indices
             )
@@ -157,20 +233,11 @@ class QueryGraphReranker(nn.Module):
         # Final prediction
         logits = self.predictor(attended).squeeze(-1)  # [batch_size]
 
-        # Ensure GNN embeddings are available (for evaluation compatibility)
-        gnn_embeddings = self.gnn_query_embeddings
-        if gnn_embeddings is None:
-            # If graph not built yet, use pooled embeddings as fallback
-            gnn_embeddings = torch.zeros_like(pooled)  # This will make losses 0 but prevent crashes
-        else:
-            # Extract embeddings for the current batch queries
-            batch_gnn_embeddings = gnn_embeddings[query_indices]  # [batch_size, gnn_output_dim]
-
         return {
             'logits': logits,
             'pooled': pooled,
             'query_indices': query_indices,
-            'gnn_embeddings': gnn_embeddings if gnn_embeddings is not None else torch.zeros_like(pooled)
+            'gnn_embeddings': gnn_embeddings if gnn_embeddings is not None else pooled
         }
 
     def compute_loss(
@@ -179,7 +246,10 @@ class QueryGraphReranker(nn.Module):
         labels: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        Compute multi-task loss: BCE + contrastive + ranking.
+        Compute multi-task loss: BCE + contrastive + coherence + alignment.
+
+        DQGAN Phase 3: Enhanced loss with GNN-targeted contrastive loss,
+        graph coherence loss, and adaptive normalization.
 
         Args:
             outputs: Forward pass outputs
@@ -196,42 +266,102 @@ class QueryGraphReranker(nn.Module):
         # 1. BCE loss (main task)
         bce_loss = F.binary_cross_entropy_with_logits(logits, labels)
 
-        # 2. Contrastive loss in query space (if GNN available)
+        # 2. GNN Contrastive loss (FIXED: uses GNN embeddings, not CE!)
         contrastive_loss = torch.tensor(0.0, device=logits.device)
-        if gnn_embeddings is not None and len(query_indices) > 1:
+        if self.use_dqgan and gnn_embeddings is not None and len(query_indices) > 1:
+            try:
+                # Get GNN embeddings for this batch
+                batch_gnn_emb = gnn_embeddings[query_indices]
+                contrastive_loss = self._compute_gnn_contrastive_loss(
+                    batch_gnn_emb, query_indices, labels
+                )
+                if torch.isnan(contrastive_loss):
+                    contrastive_loss = torch.tensor(0.0, device=logits.device)
+            except Exception as e:
+                contrastive_loss = torch.tensor(0.0, device=logits.device)
+        elif not self.use_dqgan and gnn_embeddings is not None and len(query_indices) > 1:
+            # Original contrastive loss (uses CE embeddings)
             try:
                 contrastive_loss = self._compute_contrastive_loss(
                     pooled, query_indices, labels
                 )
-                # Check for NaN
                 if torch.isnan(contrastive_loss):
                     contrastive_loss = torch.tensor(0.0, device=logits.device)
             except:
                 contrastive_loss = torch.tensor(0.0, device=logits.device)
 
-        # 3. GNN ranking loss (if GNN available)
+        # 3. Graph Coherence loss (NOVEL - DQGAN only)
+        coherence_loss = torch.tensor(0.0, device=logits.device)
+        if self.use_dqgan and gnn_embeddings is not None and self.edge_index is not None:
+            try:
+                coherence_loss = self._compute_graph_coherence_loss(
+                    gnn_embeddings, self.edge_index, labels, query_indices
+                )
+                if torch.isnan(coherence_loss):
+                    coherence_loss = torch.tensor(0.0, device=logits.device)
+            except Exception as e:
+                coherence_loss = torch.tensor(0.0, device=logits.device)
+
+        # 4. CE-GNN Alignment loss (DQGAN only)
+        alignment_loss = torch.tensor(0.0, device=logits.device)
+        if self.use_dqgan and gnn_embeddings is not None:
+            try:
+                batch_gnn_emb = gnn_embeddings[query_indices]
+                alignment_loss = self._compute_alignment_loss(pooled, batch_gnn_emb)
+                if torch.isnan(alignment_loss):
+                    alignment_loss = torch.tensor(0.0, device=logits.device)
+            except Exception as e:
+                alignment_loss = torch.tensor(0.0, device=logits.device)
+
+        # 5. Ranking loss (kept for backwards compatibility)
         rank_loss = torch.tensor(0.0, device=logits.device)
-        if gnn_embeddings is not None:
+        if not self.use_dqgan and gnn_embeddings is not None:
             try:
                 rank_loss = self._compute_rank_loss(gnn_embeddings, query_indices, labels)
-                # Check for NaN
                 if torch.isnan(rank_loss):
                     rank_loss = torch.tensor(0.0, device=logits.device)
             except:
                 rank_loss = torch.tensor(0.0, device=logits.device)
 
-        # Total loss
-        total_loss = (
-            bce_loss +
-            self.lambda_contrastive * contrastive_loss +
-            self.lambda_rank * rank_loss
-        )
+        # Compute total loss with adaptive normalization (DQGAN)
+        if self.use_dqgan and self.training:
+            # Update EMAs
+            with torch.no_grad():
+                self.bce_ema = self.ema_decay * self.bce_ema + (1 - self.ema_decay) * bce_loss.item()
+                if contrastive_loss.item() > 0:
+                    self.contrastive_ema = self.ema_decay * self.contrastive_ema + (1 - self.ema_decay) * contrastive_loss.item()
+                if coherence_loss.item() > 0:
+                    self.coherence_ema = self.ema_decay * self.coherence_ema + (1 - self.ema_decay) * coherence_loss.item()
+                if alignment_loss.item() > 0:
+                    self.alignment_ema = self.ema_decay * self.alignment_ema + (1 - self.ema_decay) * alignment_loss.item()
+
+            # Normalize losses
+            bce_norm = bce_loss / (self.bce_ema + 1e-8)
+            contrastive_norm = contrastive_loss / (self.contrastive_ema + 1e-8) if contrastive_loss.item() > 0 else contrastive_loss
+            coherence_norm = coherence_loss / (self.coherence_ema + 1e-8) if coherence_loss.item() > 0 else coherence_loss
+            alignment_norm = alignment_loss / (self.alignment_ema + 1e-8) if alignment_loss.item() > 0 else alignment_loss
+
+            total_loss = (
+                1.0 * bce_norm +
+                self.lambda_contrastive * contrastive_norm +
+                self.lambda_coherence * coherence_norm +
+                self.lambda_alignment * alignment_norm
+            )
+        else:
+            # Original loss (no adaptive normalization)
+            total_loss = (
+                bce_loss +
+                self.lambda_contrastive * contrastive_loss +
+                self.lambda_rank * rank_loss
+            )
 
         loss_dict = {
             'loss': total_loss.item(),
             'bce_loss': bce_loss.item(),
             'contrastive_loss': contrastive_loss.item(),
-            'rank_loss': rank_loss.item()
+            'coherence_loss': coherence_loss.item() if self.use_dqgan else 0.0,
+            'alignment_loss': alignment_loss.item() if self.use_dqgan else 0.0,
+            'rank_loss': rank_loss.item() if not self.use_dqgan else 0.0
         }
 
         return total_loss, loss_dict
@@ -292,6 +422,193 @@ class QueryGraphReranker(nn.Module):
             loss = loss[valid_samples].mean()
         else:
             loss = torch.tensor(0.0, device=device)
+
+        return loss
+
+    def _compute_gnn_contrastive_loss(
+        self,
+        gnn_embeddings: torch.Tensor,
+        query_indices: torch.Tensor,
+        labels: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        GNN-targeted contrastive loss (DQGAN Phase 3 - CRITICAL FIX).
+
+        Uses GNN embeddings instead of cross-encoder embeddings, ensuring
+        the contrastive loss actually trains the GNN!
+
+        Args:
+            gnn_embeddings: GNN query embeddings for this batch [batch_size, gnn_dim]
+            query_indices: Query indices [batch_size]
+            labels: Ground truth labels [batch_size]
+
+        Returns:
+            Contrastive loss scalar
+        """
+        device = gnn_embeddings.device
+
+        if len(gnn_embeddings) < 2:
+            return torch.tensor(0.0, device=device)
+
+        # Normalize GNN embeddings
+        gnn_norm = F.normalize(gnn_embeddings, dim=1)
+
+        # Compute pairwise similarities
+        sim_matrix = torch.matmul(gnn_norm, gnn_norm.T) / self.temperature
+
+        # Create positive/negative masks based on labels
+        labels_expanded = labels.unsqueeze(1)
+        positive_mask = (labels_expanded == labels_expanded.T).float()
+        negative_mask = (labels_expanded != labels_expanded.T).float()
+
+        # Remove self-similarities
+        mask_self = torch.eye(len(labels), device=device)
+        positive_mask = positive_mask * (1 - mask_self)
+        negative_mask = negative_mask * (1 - mask_self)
+
+        # Only compute if we have positives and negatives
+        if positive_mask.sum() == 0 or negative_mask.sum() == 0:
+            return torch.tensor(0.0, device=device)
+
+        # InfoNCE loss
+        exp_sim = torch.exp(sim_matrix)
+        pos_sim_sum = (exp_sim * positive_mask).sum(dim=1)
+        neg_sim_sum = (exp_sim * negative_mask).sum(dim=1)
+        denominator = pos_sim_sum + neg_sim_sum + 1e-8
+
+        loss = -torch.log(pos_sim_sum / denominator + 1e-8)
+
+        # Average over samples with positives
+        valid_samples = positive_mask.sum(dim=1) > 0
+        if valid_samples.sum() > 0:
+            loss = loss[valid_samples].mean()
+        else:
+            loss = torch.tensor(0.0, device=device)
+
+        return loss
+
+    def _compute_graph_coherence_loss(
+        self,
+        gnn_embeddings: torch.Tensor,
+        edge_index: torch.Tensor,
+        labels: torch.Tensor,
+        query_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Graph Coherence Loss (NOVEL - DQGAN Phase 3).
+
+        Enforces that connected queries in the graph should have similar predictions
+        when they have similar labels. This is the SECRET SAUCE that forces the GNN
+        to learn from neighbor relationships!
+
+        Args:
+            gnn_embeddings: GNN query embeddings [num_queries, gnn_dim]
+            edge_index: Graph edge indices [2, num_edges]
+            labels: Batch labels [batch_size]
+            query_indices: Query indices for batch [batch_size]
+
+        Returns:
+            Coherence loss scalar
+        """
+        device = gnn_embeddings.device
+
+        if edge_index.size(1) == 0:
+            return torch.tensor(0.0, device=device)
+
+        # Get source and destination nodes
+        src, dst = edge_index
+
+        # Create a mapping from query index to label (for queries in current batch)
+        query_label_map = {}
+        for q_idx, label in zip(query_indices.tolist(), labels.tolist()):
+            query_label_map[q_idx] = label
+
+        # Filter edges to only those where both nodes are in current batch
+        valid_edges = []
+        edge_label_agreements = []
+
+        for i in range(edge_index.size(1)):
+            src_idx = src[i].item()
+            dst_idx = dst[i].item()
+
+            if src_idx in query_label_map and dst_idx in query_label_map:
+                valid_edges.append(i)
+
+                # Label agreement: 1 if both have same label, 0 if different
+                src_label = query_label_map[src_idx]
+                dst_label = query_label_map[dst_idx]
+                agreement = 1.0 if src_label == dst_label else 0.0
+                edge_label_agreements.append(agreement)
+
+        if len(valid_edges) == 0:
+            return torch.tensor(0.0, device=device)
+
+        # Get embeddings for valid edges
+        valid_edges_tensor = torch.tensor(valid_edges, device=device)
+        valid_src = src[valid_edges_tensor]
+        valid_dst = dst[valid_edges_tensor]
+
+        # Compute cosine similarity between connected nodes
+        src_emb = gnn_embeddings[valid_src]
+        dst_emb = gnn_embeddings[valid_dst]
+        emb_similarity = F.cosine_similarity(src_emb, dst_emb, dim=-1)
+
+        # Target: high similarity when labels agree, low when they don't
+        target = torch.tensor(edge_label_agreements, device=device, dtype=torch.float)
+
+        # MSE loss: encourage embedding similarity to match label agreement
+        loss = F.mse_loss(emb_similarity, target)
+
+        return loss
+
+    def _compute_alignment_loss(
+        self,
+        ce_embeddings: torch.Tensor,
+        gnn_embeddings: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        CE-GNN Alignment Loss (DQGAN Phase 3).
+
+        Encourages GNN embeddings to align with cross-encoder embeddings,
+        ensuring they capture complementary information.
+
+        Uses element-wise cosine similarity since embeddings have different dimensions.
+
+        Args:
+            ce_embeddings: Cross-encoder embeddings [batch_size, ce_dim]
+            gnn_embeddings: GNN embeddings [batch_size, gnn_dim]
+
+        Returns:
+            Alignment loss scalar
+        """
+        # Normalize both embeddings
+        ce_norm = F.normalize(ce_embeddings, dim=-1)  # [batch_size, 768]
+        gnn_norm = F.normalize(gnn_embeddings, dim=-1)  # [batch_size, 128]
+
+        # Compute element-wise cosine similarity for each sample
+        # We want high similarity between CE[i] and GNN[i] for each i
+        batch_size = ce_norm.size(0)
+
+        # Project GNN embeddings to CE dimension via learned linear projection
+        # OR use mutual information-based loss
+        # For simplicity, use L2 distance in normalized space (direction similarity)
+
+        # Compute pairwise distances in batch
+        # Expand to [batch_size, batch_size, dim] for pairwise computation
+        ce_expanded = ce_norm.unsqueeze(1)  # [batch_size, 1, 768]
+        gnn_expanded = gnn_norm.unsqueeze(0)  # [1, batch_size, 128]
+
+        # Since dimensions differ, use cosine similarity via dot product after norm
+        # Compute cosine similarity between all pairs
+        # For different dims, we need to project or use a different approach
+
+        # Alternative: Encourage similar pairwise distances
+        # If CE[i] and CE[j] are close, then GNN[i] and GNN[j] should be close
+        ce_dist = torch.cdist(ce_norm, ce_norm)  # [batch_size, batch_size]
+        gnn_dist = torch.cdist(gnn_norm, gnn_norm)  # [batch_size, batch_size]
+
+        # MSE between distance matrices
+        loss = F.mse_loss(ce_dist, gnn_dist)
 
         return loss
 

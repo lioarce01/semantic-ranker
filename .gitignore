@@ -51,8 +51,7 @@ models/*/
 *.bin
 # Keep organized datasets, ignore large data files
 data/
-datasets/*.hdf5
-datasets/*.h5
+datasets/
 *.hdf5
 *.h5
 

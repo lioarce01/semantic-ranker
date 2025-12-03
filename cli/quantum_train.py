@@ -33,6 +33,7 @@ logger = setup_logging()
 # Now import semantic_ranker modules
 from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader, DataPreprocessor
 from semantic_ranker.training import CrossEncoderTrainer
+from semantic_ranker.evaluation.metrics import compute_ndcg, compute_mrr, compute_map
 
 
 class QuantumResonanceTrainer:
@@ -172,6 +173,87 @@ class QuantumResonanceTrainer:
         return collapsed_data
 
 
+def evaluate_model(model, val_triples, batch_size=32, device='cpu'):
+    """Evaluate model on validation set and compute ranking metrics.
+
+    Args:
+        model: The trained model
+        val_triples: List of [query, doc, label] validation triples
+        batch_size: Batch size for evaluation
+        device: Device to run evaluation on
+
+    Returns:
+        Dictionary with NDCG@10, MRR@10, MAP@10
+    """
+    if len(val_triples) == 0:
+        return {'ndcg@10': 0.0, 'mrr@10': 0.0, 'map@10': 0.0}
+
+    model.model.eval()
+
+    # Group triples by query
+    from collections import defaultdict
+    query_results = defaultdict(list)
+
+    # Batch evaluation
+    with torch.no_grad():
+        for i in range(0, len(val_triples), batch_size):
+            batch = val_triples[i:i + batch_size]
+            queries = [item[0] for item in batch]
+            documents = [item[1] for item in batch]
+            labels = [item[2] for item in batch]
+
+            # Tokenize and predict
+            inputs = model.tokenizer(
+                queries,
+                documents,
+                truncation=True,
+                padding=True,
+                max_length=model.max_length,
+                return_tensors='pt'
+            )
+
+            if device == 'cuda' and torch.cuda.is_available():
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            outputs = model.model(**inputs)
+            scores = torch.sigmoid(outputs.logits).squeeze().cpu().numpy()
+
+            # Handle single item case
+            if len(batch) == 1:
+                scores = [scores.item()]
+            else:
+                scores = scores.tolist()
+
+            # Group by query
+            for query, score, label in zip(queries, scores, labels):
+                query_results[query].append((score, label))
+
+    # Compute metrics per query, then average
+    ndcg_scores = []
+    mrr_scores = []
+    map_scores = []
+
+    for query, results in query_results.items():
+        # Sort by predicted score (descending)
+        sorted_results = sorted(results, key=lambda x: x[0], reverse=True)
+        labels = [int(label) for score, label in sorted_results]
+
+        # Compute metrics
+        ndcg_scores.append(compute_ndcg(labels, k=10))
+        mrr_scores.append(compute_mrr(labels, k=10))
+        map_scores.append(compute_map(labels, k=10))
+
+    # Average across queries
+    metrics = {
+        'ndcg@10': np.mean(ndcg_scores) if ndcg_scores else 0.0,
+        'mrr@10': np.mean(mrr_scores) if mrr_scores else 0.0,
+        'map@10': np.mean(map_scores) if map_scores else 0.0
+    }
+
+    model.model.train()
+    return metrics
+
+
 def main():
     parser = argparse.ArgumentParser(description='Train with Quantum Resonance Fine-Tuning')
 
@@ -225,18 +307,18 @@ def main():
 
     try:
         # 1. Load and validate data
-        logger.info(f"\n📊 Step 1: Loading data ({max_samples} samples)...")
+        logger.info(f"\n📊 Step 1: Loading data (max: {max_samples} samples)...")
 
-        if dataset == 'msmarco':
-            loader = MSMARCODataLoader()
-            train_data, val_data, _ = loader.load_and_split(max_samples=max_samples)
-        else:
-            # Load custom dataset
-            custom_loader = CustomDataLoader()
-            train_data = custom_loader.load_from_json(f"datasets/{dataset}.json", max_samples=max_samples)
-            val_data = []  # No validation for custom datasets in quantum mode
+        # Use unified data loading (handles both MSMARCO and custom datasets with auto-split)
+        train_data, val_data, test_data = load_dataset_unified(
+            dataset,
+            max_samples,
+            config.data.train_split,
+            config.data.val_split,
+            config.data.test_split
+        )
 
-        logger.info(f"✅ Loaded {len(train_data)} training samples")
+        logger.info(f"✅ Loaded data: {len(train_data)} train | {len(val_data)} val | {len(test_data)} test")
 
         # 2. Initialize quantum resonance trainer
         logger.info("\n🧬 Step 2: Initializing Quantum Resonance Trainer...")
@@ -274,36 +356,66 @@ def main():
             logger.info("   Maintaining superposition state...")
             quantum_train_data = train_data
         else:
+            # Resonance mode: need to group data by query for entanglement graph
+            # Convert from {'query', 'document', 'label'} to {'query', 'documents', 'labels'}
+            logger.info("   Grouping data by query for entanglement graph...")
+            from collections import defaultdict
+            grouped_data = defaultdict(lambda: {'query': '', 'documents': [], 'labels': []})
+
+            for sample in train_data:
+                query = sample['query']
+                grouped_data[query]['query'] = query
+                grouped_data[query]['documents'].append(sample['document'])
+                grouped_data[query]['labels'].append(sample['label'])
+
+            grouped_list = list(grouped_data.values())
+            logger.info(f"   Grouped {len(train_data)} samples into {len(grouped_list)} queries")
+
             # Build entanglement graph and collapse superposition
-            quantum_trainer.build_entanglement_graph(train_data)
-            quantum_train_data = quantum_trainer.collapse_superposition(train_data)
+            quantum_trainer.build_entanglement_graph(grouped_list)
+            quantum_train_data = quantum_trainer.collapse_superposition(grouped_list)
 
         # 4. Prepare data for training
         logger.info("\n📊 Step 4: Preparing training data...")
-        preprocessor = DataPreprocessor(tokenizer_name=model_name)
 
-        # Convert to training format
-        if hasattr(quantum_train_data[0], 'documents'):
-            # Already in correct format
-            train_triples = []
-            for sample in quantum_train_data:
-                query = sample['query']
-                docs = sample['documents']
-                labels = sample['labels']
+        # Convert to training triples format
+        train_triples = []
 
-                for doc, label in zip(docs, labels):
-                    train_triples.append([query, doc, label])
-        else:
-            # Convert from old format
-            train_triples = preprocessor.create_triples(quantum_train_data)
+        # Check if data is in grouped format (from resonance mode) or flat format (from superposition)
+        if isinstance(quantum_train_data, list) and len(quantum_train_data) > 0:
+            first_sample = quantum_train_data[0]
+
+            if 'documents' in first_sample and 'labels' in first_sample:
+                # Grouped format from resonance mode - expand to triples
+                for sample in quantum_train_data:
+                    query = sample['query']
+                    for doc, label in zip(sample['documents'], sample['labels']):
+                        train_triples.append([query, doc, label])
+            else:
+                # Flat format from superposition mode - direct conversion
+                train_triples = [[sample['query'], sample['document'], sample['label']]
+                                for sample in quantum_train_data]
 
         logger.info(f"✅ Created {len(train_triples)} training triples")
+
+        # Prepare validation data
+        val_triples = []
+        if len(val_data) > 0:
+            val_triples = [[sample['query'], sample['document'], sample['label']]
+                          for sample in val_data]
+            logger.info(f"✅ Created {len(val_triples)} validation triples")
+        else:
+            logger.warning("⚠️ No validation data available")
 
         # 5. Quantum training
         logger.info(f"\n🚀 Step 5: Quantum training for {epochs} epochs...")
         logger.info(f"   Learning rate: {learning_rate}")
         logger.info(f"   Batch size: {batch_size}")
         logger.info(f"   LoRA enabled: {use_lora}")
+
+        # Get eval_steps from config (default 100)
+        eval_steps = getattr(config.training, 'eval_steps', 100)
+        logger.info(f"   Evaluation frequency: every {eval_steps} steps")
 
         # Custom training loop with quantum loss
         optimizer = torch.optim.AdamW(
@@ -323,7 +435,10 @@ def main():
             num_training_steps=total_steps
         )
 
-        best_loss = float('inf')
+        # Track best validation metric (not training loss)
+        best_val_ndcg = 0.0
+        global_step = 0
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         for epoch in range(epochs):
             logger.info(f"\nEpoch {epoch + 1}/{epochs}")
@@ -376,22 +491,44 @@ def main():
 
                 epoch_loss += loss.item()
                 num_batches += 1
+                global_step += 1
 
+                # Logging
                 if batch_idx % 50 == 0:
-                    logger.info(f"   Loss: {epoch_loss / (batch_idx + 1):.4f}")
-            avg_epoch_loss = epoch_loss / num_batches
-            logger.info(f"   Average Loss: {avg_epoch_loss:.4f}")
-            # Save best model
-            if avg_epoch_loss < best_loss:
-                best_loss = avg_epoch_loss
-                trainer.save_model(output_dir, save_best=True)
-                logger.info("💾 Saved best model")
+                    logger.info(f"   Step {global_step} | Loss: {epoch_loss / (batch_idx + 1):.4f}")
 
-        # 6. Final save
+                # Step-based validation
+                if len(val_triples) > 0 and global_step % eval_steps == 0:
+                    logger.info(f"\n📊 Validation at step {global_step}...")
+                    val_metrics = evaluate_model(trainer.model, val_triples, batch_size=32, device=device)
+                    logger.info(f"   NDCG@10: {val_metrics['ndcg@10']:.4f} | MRR@10: {val_metrics['mrr@10']:.4f} | MAP@10: {val_metrics['map@10']:.4f}")
+
+                    # Save best model based on validation NDCG@10
+                    if val_metrics['ndcg@10'] > best_val_ndcg:
+                        best_val_ndcg = val_metrics['ndcg@10']
+                        logger.info(f"   ✨ New best validation NDCG@10: {best_val_ndcg:.4f}")
+                        logger.info(f"   💾 Saving best model to {output_dir}")
+                        trainer.save_model(output_dir, save_best=True)
+                        save_config_with_model(config, output_dir)
+                        logger.info("   ✅ Best model saved\n")
+
+                    # Set back to training mode
+                    trainer.model.model.train()
+
+            # Log epoch summary (avoid division by zero)
+            if num_batches > 0:
+                avg_epoch_loss = epoch_loss / num_batches
+                logger.info(f"   Average epoch loss: {avg_epoch_loss:.4f}")
+            else:
+                logger.warning("   No batches processed in this epoch")
+
+        # 6. Final save and summary
         trainer.save_model(output_dir, save_best=False)
         save_config_with_model(config, output_dir)
         logger.info("\n🎉 Quantum training completed!")
         logger.info(f"📁 Model saved to: {output_dir}")
+        if len(val_triples) > 0:
+            logger.info(f"🏆 Best validation NDCG@10: {best_val_ndcg:.4f}")
         logger.info("\n🧬 Quantum resonance patterns learned!")
         logger.info("   - Query-document relationships modeled as quantum states")
         logger.info("   - Resonance frequencies computed for optimal ranking")

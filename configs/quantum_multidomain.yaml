@@ -1,0 +1,73 @@
+# Quantum Multi-Domain Training
+# Superset + Best BEIR Datasets Combined
+# Target: Strong in-domain + zero-shot generalization
+
+model:
+  model_name: bert-base-uncased
+  max_length: 256
+  use_lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+training:
+  epochs: 1  # CPU training: 702K samples × 1 epoch = plenty of data
+  batch_size: 16  # Match quantum best model
+  learning_rate: 0.00002  # 2e-5 proven optimal
+  weight_decay: 0.01  # Match quantum best model
+  warmup_ratio: 0.1  # Match quantum best model
+  max_grad_norm: 1.0
+  loss_function: bce
+  eval_steps: 200  # Standard evaluation frequency
+  logging_steps: 100  # Less frequent logging
+  save_strategy: best
+  gradient_accumulation_steps: 4  # Effective batch = 64
+  fp16: true
+
+data:
+  # Multi-domain dataset (superset + BEIR nfcorpus/scifact/arguana)
+  dataset: multidomain_comprehensive
+  max_samples: null
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  negative_sampling: hard
+  num_negatives: 2
+
+quantum:
+  quantum_mode: true
+  resonance_threshold: 0.35
+  entanglement_weight: 0.2
+  quantum_phase: superposition 
+  knowledge_preservation_weight: 0.6
+  resonance_penalty_scale: 0.01
+  entanglement_loss_scale: 0.01
+
+evaluation:
+  metrics:
+    - ndcg@10
+    - ndcg@20
+    - mrr@10
+    - map@10
+  batch_size: 32
+  num_samples: null
+
+# Multi-domain dataset created with scripts/create_multidomain_dataset.py
+#
+# Dataset composition:
+# - superset_comprehensive: 5,503 items (~29K samples)
+# - beir/nfcorpus (medicine): ~35K items
+# - beir/scifact (scientific): ~42K items
+# - beir/arguana (argumentation): ~34K items
+#
+# Total: 117K items → ~702K training samples
+#
+# Training estimates:
+# - Steps per epoch: ~43,875 (702K / 16 batch)
+# - Total steps (1 epoch): ~43,875
+# - Training time: ~18-24 hours on CPU (Ryzen 7 7800X3D)
+#
+# Expected performance:
+# - NDCG@10: 0.78-0.85 (multi-domain robustness)
+# - Zero-shot BEIR: 0.35-0.45 (strong generalization)
+# - Better than single-domain on out-of-distribution queries

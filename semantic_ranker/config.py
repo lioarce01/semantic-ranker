@@ -80,15 +80,37 @@ class GNNConfig:
     """Query Graph Neural Network configuration"""
     gnn_mode: bool = False
     embedding_model: str = "all-mpnet-base-v2"
+
+    # Graph construction
     similarity_threshold: float = 0.7
     max_neighbors: int = 10
     max_queries_for_graph: int = 200  # Maximum queries for graph construction
     graph_batch_size: int = 200       # Chunk size for memory-efficient graph building
+
+    # DQGAN: k-NN graph construction
+    use_knn: bool = False             # Use k-NN instead of threshold-based
+    k_neighbors: int = 15             # Number of neighbors for k-NN mode
+    graph_update_frequency: int = 1   # Refresh graph every N epochs
+
+    # GNN architecture
     gnn_hidden_dim: int = 256
     gnn_output_dim: int = 128
     gnn_dropout: float = 0.1
+
+    # DQGAN: Enhanced GNN architecture
+    use_dqgan: bool = False           # Enable DQGAN enhancements
+    gnn_num_heads: int = 4            # Number of attention heads for GAT
+    gnn_num_layers: int = 3           # Number of GNN layers
+    fusion_type: str = "scalar"       # Fusion type: "scalar" or "cross_attention"
+
+    # Loss weights
     lambda_contrastive: float = 0.1
     lambda_rank: float = 0.05
+
+    # DQGAN: Additional loss weights
+    lambda_coherence: float = 0.15    # Graph coherence loss weight
+    lambda_alignment: float = 0.1     # CE-GNN alignment loss weight
+
     temperature: float = 0.07
 
 
