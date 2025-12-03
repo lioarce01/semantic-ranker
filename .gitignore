@@ -99,6 +99,10 @@ training_history.json
 .cursor/
 terminals/
 
+# Claude Code
+.claude/
+staged-*.md
+
 # ML experiment tracking
 tensorboard/
 runs/
