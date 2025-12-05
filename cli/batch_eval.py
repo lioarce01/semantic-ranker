@@ -32,10 +32,10 @@ from semantic_ranker.models import CrossEncoderModel
 from semantic_ranker.data import MSMARCODataLoader, CustomDataLoader
 
 # Key datasets for comprehensive evaluation
-KEY_DATASETS = [
-    'qa_mixed_giant',                            # Training data performance
-    'natural_questions',                         # Open-ended QA performance
-    'superset_comprehensive'                     # Comprehensive dataset performance
+KEY_DATASETS = [ 
+    'nq_eval',                         # Open-ended QA performance
+    'msmarco_dev',                     # Comprehensive dataset performance
+    'squad_eval',                      # Comprehensive dataset performance
 ]
 
 
